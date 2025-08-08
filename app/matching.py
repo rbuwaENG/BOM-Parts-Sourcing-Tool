@@ -58,8 +58,6 @@ def compute_weighted_similarity(bom: BomRow, part: Part) -> float:
 
     spec_sim = _tfidf_cosine_similarity(bom_specs, part_specs)
 
-    # Weighted combination: package 40, voltage 30, other 20, desc 10 approximated via combined TF-IDF and part number
-    # Heuristic: if part number exists, give it strong influence; otherwise rely fully on spec_sim
     if bom.part_number and part.part_number:
         combined = 0.6 * part_num_sim + 0.4 * spec_sim
     else:
@@ -94,7 +92,6 @@ def find_best_matches_for_bom(
             other_specs=str(row.get("Other_Specs")) if pd.notna(row.get("Other_Specs")) else None,
         )
 
-        # Filter candidates by in-stock if requested
         def stock_ok(p: Part) -> bool:
             if not in_stock_only:
                 return True
@@ -113,36 +110,39 @@ def find_best_matches_for_bom(
         best = scored[0] if scored else (None, 0.0)
         if best[0] is not None and best[1] >= min_similarity:
             part = best[0]
+            supplier_name = session.get(Supplier, part.supplier_id).name
             results.append({
-                "BOM Part Number": bom.part_number,
-                "Found Part Number": part.part_number,
-                "Supplier": session.get(Supplier, part.supplier_id).name,
+                "BOM Part Name": bom.description or bom.part_number,
+                "Found Part Name": part.name or part.part_number,
+                "Supplier": supplier_name,
                 "Price": _extract_primary_price(part.price_tiers_json),
                 "Stock Availability": part.stock,
+                "Image": part.image_url,
                 "Datasheet Link": part.datasheet_url,
                 "Purchase Link": part.purchase_url,
                 "Similarity %": round(best[1], 1),
             })
         else:
-            # No adequate match; leave row with NA
             results.append({
-                "BOM Part Number": bom.part_number,
-                "Found Part Number": None,
+                "BOM Part Name": bom.description or bom.part_number,
+                "Found Part Name": None,
                 "Supplier": None,
                 "Price": None,
                 "Stock Availability": None,
+                "Image": None,
                 "Datasheet Link": None,
                 "Purchase Link": None,
                 "Similarity %": round(best[1], 1) if best[0] is not None else 0.0,
             })
-            # Top 5 alternatives
             alt = []
-            for p, s in scored[:5]:
+            for p, s in scored[:10]:
+                supplier_name = session.get(Supplier, p.supplier_id).name
                 alt.append({
-                    "found_part_number": p.part_number,
-                    "supplier": session.get(Supplier, p.supplier_id).name,
+                    "found_part_name": p.name or p.part_number,
+                    "supplier": supplier_name,
                     "price": _extract_primary_price(p.price_tiers_json),
                     "stock": p.stock,
+                    "image": p.image_url,
                     "datasheet_link": p.datasheet_url,
                     "purchase_link": p.purchase_url,
                     "similarity": round(s, 1),

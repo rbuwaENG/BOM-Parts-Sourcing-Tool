@@ -28,12 +28,19 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
 st.caption("Find exact and alternative electronic parts across multiple suppliers.")
 
+# Ensure DB initialized and seed sample data on first run
+ensure_db_initialized()
+initialize_database_with_sample_data()
+
 # Sidebar controls
 with st.sidebar:
     st.header("Options")
     min_similarity = st.slider("Minimum Similarity %", min_value=0, max_value=100, value=70, step=5)
     in_stock_only = st.checkbox("In-stock only", value=False)
-    supplier_filter = st.text_input("Filter by Supplier (comma-separated)", value="")
+
+    with get_session() as session:
+        supplier_names = [s.name for s in session.query(Supplier).order_by(Supplier.name).all()]
+    supplier_filter = st.multiselect("Suppliers", options=supplier_names, default=supplier_names)
 
     st.divider()
     st.subheader("Database")
@@ -43,10 +50,6 @@ with st.sidebar:
 
     last_update = get_last_update_time()
     st.caption(f"Last Database Update: {last_update if last_update else 'Never'}")
-
-# Ensure DB initialized and seed sample data on first run
-ensure_db_initialized()
-initialize_database_with_sample_data()
 
 # Section 1: BOM Upload
 st.subheader("📂 Upload Your BOM")
@@ -73,8 +76,10 @@ if uploaded_file is not None:
     if not ok:
         st.warning(f"Missing expected columns: {', '.join(missing)}")
 
-    st.write("Preview:")
-    st.dataframe(bom_df.head(50), use_container_width=True)
+    st.write("Preview of your uploaded BOM (first 100 rows):")
+    st.dataframe(bom_df.head(100), use_container_width=True)
+
+    st.caption(f"Active suppliers: {', '.join(supplier_filter) if supplier_filter else 'None'}")
 
     if st.button("Upload & Process"):
         with st.spinner("Processing your BOM... this may take a moment"):
@@ -85,7 +90,7 @@ if uploaded_file is not None:
                     bom_df=bom_df,
                     min_similarity=min_similarity,
                     in_stock_only=in_stock_only,
-                    supplier_filter=[s.strip() for s in supplier_filter.split(",") if s.strip()],
+                    supplier_filter=supplier_filter,
                 )
             elapsed = time.time() - start
         st.success(f"Processing done in {elapsed:.1f}s")
@@ -97,14 +102,26 @@ if uploaded_file is not None:
             except Exception:
                 return ""
             if v >= 100:
-                return "background-color: #DCFCE7"  # green-100
+                return "background-color: #DCFCE7"
             if v >= 70:
-                return "background-color: #FEF3C7"  # amber-100
-            return "background-color: #FEE2E2"      # red-100
+                return "background-color: #FEF3C7"
+            return "background-color: #FEE2E2"
 
-        styled = results_df.style.applymap(similarity_color, subset=["Similarity %"]) if not results_df.empty else results_df
-        st.subheader("🔍 Results")
-        st.dataframe(styled, use_container_width=True)
+        st.subheader("🔍 Available Matches")
+        # Separate available results (where a match was found)
+        available_df = results_df[results_df["Found Part Name"].notna()].copy()
+        if not available_df.empty:
+            st.dataframe(
+                available_df.style.applymap(similarity_color, subset=["Similarity %"]),
+                use_container_width=True,
+                column_config={
+                    "Image": st.column_config.ImageColumn("Image", help="Product image", width="small"),
+                    "Datasheet Link": st.column_config.LinkColumn("Datasheet Link"),
+                    "Purchase Link": st.column_config.LinkColumn("Purchase Link"),
+                },
+            )
+        else:
+            st.caption("No direct matches found above the similarity threshold.")
 
         # Download buttons
         csv_bytes = dataframe_to_download_bytes(results_df, kind="csv")
@@ -115,35 +132,53 @@ if uploaded_file is not None:
         with col2:
             st.download_button("⬇ Download Excel", data=xlsx_bytes, file_name="bom_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        # Suggestions section
-        st.subheader("▼ Similar Alternatives for Unmatched Parts")
-        if len(suggestions_map) == 0:
-            st.caption("No unmatched parts.")
-        for idx, suggestions in suggestions_map.items():
-            with st.expander(f"Alternatives for BOM row {idx}"):
-                if suggestions:
-                    suggestions_df = pd.DataFrame(suggestions)
-                    suggestions_df = suggestions_df[[
-                        "found_part_number",
-                        "supplier",
-                        "price",
-                        "stock",
-                        "datasheet_link",
-                        "purchase_link",
-                        "similarity",
-                    ]]
-                    suggestions_df.rename(columns={
-                        "found_part_number": "Found Part Number",
-                        "supplier": "Supplier",
-                        "price": "Price",
-                        "stock": "Stock Availability",
-                        "datasheet_link": "Datasheet Link",
-                        "purchase_link": "Purchase Link",
-                        "similarity": "Similarity %",
-                    }, inplace=True)
-                    st.dataframe(suggestions_df, use_container_width=True)
-                else:
-                    st.write("No suggestions found.")
+        # Suggestions section: group unique alternatives across unmatched parts
+        st.subheader("▼ Suggestions (Unique Alternatives)")
+        # Flatten and deduplicate by (supplier, found_part_name, purchase_link)
+        seen = set()
+        unique_rows = []
+        for _, suggestions in suggestions_map.items():
+            for srow in suggestions:
+                key = (srow.get("supplier"), srow.get("found_part_name"), srow.get("purchase_link"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique_rows.append(srow)
+        if unique_rows:
+            suggestions_df = pd.DataFrame(unique_rows)
+            # Order columns and rename
+            if not suggestions_df.empty:
+                suggestions_df = suggestions_df[[
+                    "found_part_name",
+                    "supplier",
+                    "price",
+                    "stock",
+                    "image",
+                    "datasheet_link",
+                    "purchase_link",
+                    "similarity",
+                ]]
+                suggestions_df.rename(columns={
+                    "found_part_name": "Found Part Name",
+                    "supplier": "Supplier",
+                    "price": "Price",
+                    "stock": "Stock Availability",
+                    "image": "Image",
+                    "datasheet_link": "Datasheet Link",
+                    "purchase_link": "Purchase Link",
+                    "similarity": "Similarity %",
+                }, inplace=True)
+            st.dataframe(
+                suggestions_df.style.applymap(similarity_color, subset=["Similarity %"]),
+                use_container_width=True,
+                column_config={
+                    "Image": st.column_config.ImageColumn("Image", help="Product image", width="small"),
+                    "Datasheet Link": st.column_config.LinkColumn("Datasheet Link"),
+                    "Purchase Link": st.column_config.LinkColumn("Purchase Link"),
+                },
+            )
+        else:
+            st.caption("No alternative suggestions available.")
 
 # Section: Add new supplier
 st.divider()
@@ -162,7 +197,6 @@ with st.form("add_supplier_form", clear_on_submit=False):
             session.add(supplier)
             session.flush()
 
-            # Create empty rule first
             rule = SupplierRule(
                 supplier_id=supplier.id,
                 search_url_template=search_template.strip() if search_template else None,

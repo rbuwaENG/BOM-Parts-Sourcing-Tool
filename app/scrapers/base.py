@@ -14,6 +14,7 @@ class SupplierResult:
     stock: Optional[str]
     datasheet_link: Optional[str]
     purchase_link: Optional[str]
+    image_url: Optional[str]
     extra: Dict[str, Any]
 
 

@@ -73,6 +73,7 @@ class Part(Base):
 
     datasheet_url = Column(String(2048), nullable=True)
     purchase_url = Column(String(2048), nullable=True)
+    image_url = Column(String(2048), nullable=True)
 
     last_updated = Column(DateTime, default=datetime.utcnow, nullable=False)
 

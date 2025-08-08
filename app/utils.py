@@ -71,6 +71,7 @@ def initialize_database_with_sample_data() -> None:
                     price_tiers_json=json.dumps(price_tiers),
                     datasheet_url=r.get("Datasheet"),
                     purchase_url=r.get("Purchase_Link"),
+                    image_url=r.get("Image"),
                 )
                 session.add(part)
         session.commit()

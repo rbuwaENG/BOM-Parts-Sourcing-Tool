@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
-from typing import Iterable, Tuple, List
+from typing import Iterable, Tuple, List, Dict
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -43,9 +43,48 @@ def read_bom_file(uploaded) -> pd.DataFrame:
         return pd.read_excel(uploaded)
 
 
+def normalize_bom_columns(df: pd.DataFrame) -> pd.DataFrame:
+    def norm(s: str) -> str:
+        return "".join(ch for ch in s.lower() if ch.isalnum())
+
+    alias_map: Dict[str, str] = {
+        # Part number
+        "partnumber": "Part_Number",
+        "mpn": "Part_Number",
+        "partno": "Part_Number",
+        "mfrpart": "Part_Number",
+        "manufacturerpartnumber": "Part_Number",
+        # Description
+        "description": "Description",
+        "desc": "Description",
+        # Quantity
+        "qty": "Quantity",
+        "quantity": "Quantity",
+        # Package / footprint
+        "package": "Package",
+        "footprint": "Package",
+        # Voltage
+        "voltage": "Voltage",
+        "volt": "Voltage",
+        # Other Specs
+        "otherspecs": "Other_Specs",
+        "specs": "Other_Specs",
+        "parameters": "Other_Specs",
+    }
+
+    rename_map: Dict[str, str] = {}
+    for col in df.columns:
+        key = norm(str(col))
+        if key in alias_map:
+            rename_map[col] = alias_map[key]
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    return df
+
+
 def validate_bom_columns(cols: Iterable[str]) -> Tuple[bool, List[str]]:
-    cols_lower = {c.strip() for c in cols}
-    missing = [c for c in REQUIRED_COLUMNS if c not in cols_lower]
+    cols_set = {c.strip() for c in cols}
+    missing = [c for c in REQUIRED_COLUMNS if c not in cols_set]
     return (len(missing) == 0, missing)
 
 

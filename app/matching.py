@@ -44,12 +44,13 @@ def _tfidf_cosine_similarity(text_a: str, text_b: str) -> float:
 
 
 def compute_weighted_similarity(bom: BomRow, part: Part) -> float:
-    # Part number (Levenshtein)
     part_num_sim = 0.0
     if bom.part_number and part.part_number:
-        part_num_sim = _levenshtein_similarity(_normalize_text(bom.part_number), _normalize_text(part.part_number))
+        pn_a = _normalize_text(bom.part_number)
+        pn_b = _normalize_text(part.part_number)
+        if pn_a and pn_b:
+            part_num_sim = _levenshtein_similarity(pn_a, pn_b)
 
-    # Spec-based (TF-IDF) on combined fields with weighting
     def join_specs(desc, pkg, volt, other):
         return " ".join([_normalize_text(x) for x in [desc, pkg, volt, other] if x])
 
@@ -59,7 +60,7 @@ def compute_weighted_similarity(bom: BomRow, part: Part) -> float:
     spec_sim = _tfidf_cosine_similarity(bom_specs, part_specs)
 
     if bom.part_number and part.part_number:
-        combined = 0.6 * part_num_sim + 0.4 * spec_sim
+        combined = 0.5 * part_num_sim + 0.5 * spec_sim
     else:
         combined = spec_sim
 
@@ -73,7 +74,6 @@ def find_best_matches_for_bom(
     in_stock_only: bool = False,
     supplier_filter: Optional[List[str]] = None,
 ) -> Tuple[pd.DataFrame, Dict[int, List[Dict[str, Any]]]]:
-    # Load parts from DB with optional supplier filter
     query = session.query(Part).join(Supplier)
     if supplier_filter:
         query = query.filter(Supplier.name.in_(supplier_filter))
@@ -83,13 +83,16 @@ def find_best_matches_for_bom(
     suggestions_map: Dict[int, List[Dict[str, Any]]] = {}
 
     for idx, row in bom_df.iterrows():
+        pn = row.get("Part_Number")
+        pn = str(pn).strip() if pd.notna(pn) else None
+        pn = pn if pn else None
         bom = BomRow(
-            part_number=str(row.get("Part_Number")) if pd.notna(row.get("Part_Number")) else None,
-            description=str(row.get("Description")) if pd.notna(row.get("Description")) else None,
+            part_number=pn,
+            description=str(row.get("Description")).strip() if pd.notna(row.get("Description")) else None,
             quantity=int(row.get("Quantity")) if pd.notna(row.get("Quantity")) else None,
-            package=str(row.get("Package")) if pd.notna(row.get("Package")) else None,
-            voltage=str(row.get("Voltage")) if pd.notna(row.get("Voltage")) else None,
-            other_specs=str(row.get("Other_Specs")) if pd.notna(row.get("Other_Specs")) else None,
+            package=str(row.get("Package")).strip() if pd.notna(row.get("Package")) else None,
+            voltage=str(row.get("Voltage")).strip() if pd.notna(row.get("Voltage")) else None,
+            other_specs=str(row.get("Other_Specs")).strip() if pd.notna(row.get("Other_Specs")) else None,
         )
 
         def stock_ok(p: Part) -> bool:
@@ -100,7 +103,6 @@ def find_best_matches_for_bom(
             return any(s in p.stock.lower() for s in ["in stock", "available", "+", ">", "stock:"])
 
         candidates = [p for p in parts if stock_ok(p)]
-
         scored: List[Tuple[Part, float]] = []
         for p in candidates:
             score = compute_weighted_similarity(bom, p)
@@ -135,7 +137,7 @@ def find_best_matches_for_bom(
                 "Similarity %": round(best[1], 1) if best[0] is not None else 0.0,
             })
             alt = []
-            for p, s in scored[:10]:
+            for p, s in scored[:20]:
                 supplier_name = session.get(Supplier, p.supplier_id).name
                 alt.append({
                     "found_part_name": p.name or p.part_number,

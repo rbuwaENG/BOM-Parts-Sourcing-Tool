@@ -74,6 +74,9 @@ if total_parts == 0:
 if uploaded_file is not None:
     try:
         bom_df = read_bom_file(uploaded_file)
+        # Normalize common column names to match expected schema
+        from app.utils import normalize_bom_columns
+        bom_df = normalize_bom_columns(bom_df)
     except Exception as exc:
         st.error(f"Failed to read BOM file: {exc}")
         st.stop()

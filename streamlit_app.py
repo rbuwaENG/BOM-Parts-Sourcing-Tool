@@ -24,16 +24,9 @@ APP_TITLE = "BOM Sourcing & Suggestion Platform"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# Header + Simple Nav
+# Header
 st.title(APP_TITLE)
 st.caption("Find exact and alternative electronic parts across multiple suppliers.")
-nav = st.radio("Navigation", ["Home", "Supplier Management", "Scraping Runner"], horizontal=True)
-if nav == "Supplier Management":
-    st.page_link("pages/1_Supplier_Edit.py", label="Open Supplier Management", icon="🛠️")
-    st.stop()
-elif nav == "Scraping Runner":
-    st.page_link("pages/2_Scraping_Runner.py", label="Open Scraping Runner", icon="🏃")
-    st.stop()
 
 # Ensure DB initialized and seed sample data on first run
 ensure_db_initialized()
@@ -71,6 +64,12 @@ with col_b:
         file_name="bom_template.csv",
         mime="text/csv",
     )
+
+# If DB has no parts, advise running scrapers first
+with get_session() as session:
+    total_parts = session.query(Part).count()
+if total_parts == 0:
+    st.warning("No supplier data found. Please run scrapers (see 'Scraping Runner' page) before processing a BOM.")
 
 if uploaded_file is not None:
     try:

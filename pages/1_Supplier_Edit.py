@@ -1,6 +1,7 @@
 import json
 import time
 from typing import Optional
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -26,7 +27,7 @@ if not sel_name:
 
 selected = next(s for s in supplier_rows if s["name"] == sel_name)
 with get_session() as session:
-    supplier = session.query(Supplier).get(selected["id"])
+    supplier = session.get(Supplier, selected["id"])
     rule = session.query(SupplierRule).filter_by(supplier_id=supplier.id).first()
 
 st.subheader(f"Edit: {supplier.name}")
@@ -43,7 +44,7 @@ new_json = st.text_area("Sitemap JSON", value=initial_json, height=220, placehol
 save = st.button("Save Settings")
 if save:
     with get_session() as session:
-        s = session.query(Supplier).get(supplier.id)
+        s = session.get(Supplier, supplier.id)
         s.is_active = is_active
         r = session.query(SupplierRule).filter_by(supplier_id=s.id).first()
         if not r:
@@ -133,7 +134,7 @@ if run_now:
                     "status": "running",
                 })
         session.commit()
-        set_last_update_time()
+        set_last_update_time(datetime.utcnow())
         write_progress(progress_key, {"pct": 100.0, "scraped": scraped, "stored": stored, "status": "done"})
     st.success(f"Scraper finished. Stored {stored} items.")
 

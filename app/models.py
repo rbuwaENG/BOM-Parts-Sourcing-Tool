@@ -49,6 +49,12 @@ class SupplierRule(Base):
     datasheet_selector = Column(String(512), nullable=True)
     purchase_link_selector = Column(String(512), nullable=True)
 
+    # Structured sitemap JSON (as text)
+    sitemap_json = Column(Text, nullable=True)
+
+    # Enable/disable this rule
+    is_enabled = Column(Boolean, default=True, nullable=False)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

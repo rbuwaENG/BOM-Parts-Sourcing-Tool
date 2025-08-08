@@ -33,7 +33,13 @@ def ensure_db_initialized() -> None:
 def _get_session_factory():
     global _SessionLocal
     if _SessionLocal is None:
-        _SessionLocal = sessionmaker(bind=_get_engine(), autoflush=False, autocommit=False, future=True)
+        _SessionLocal = sessionmaker(
+            bind=_get_engine(),
+            autoflush=False,
+            autocommit=False,
+            expire_on_commit=False,
+            future=True,
+        )
     return _SessionLocal
 
 

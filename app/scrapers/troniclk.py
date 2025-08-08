@@ -48,8 +48,8 @@ class TronicLkScraper(SupplierScraper):
 
     def _get(self, url: str) -> Optional[BeautifulSoup]:
         try:
-            r = requests.get(url, headers=self.headers, timeout=25)
-            if r.status_code != 200:
+            r = requests.get(url, headers=self.headers, timeout=25, allow_redirects=True)
+            if r.status_code >= 400:
                 return None
             return BeautifulSoup(r.text, "lxml")
         except Exception:
@@ -60,19 +60,27 @@ class TronicLkScraper(SupplierScraper):
             return None
         return urljoin(self.base_url, href)
 
+    def _is_valid_product_link(self, url: Optional[str]) -> bool:
+        if not url or "/product/" not in url:
+            return False
+        try:
+            r = requests.get(url, headers=self.headers, timeout=15, allow_redirects=True)
+            if r.status_code >= 400:
+                return False
+            # Final URL should still look like a product page
+            return "/product/" in r.url
+        except Exception:
+            return False
+
     def _iter_category_pages(self, start_url: str):
-        # Visit category, then follow pagination using selector
         soup = self._get(start_url)
         if not soup:
             return
-        # gather product links on first page
         yield soup
-        # follow pagination by clicking the angle-right until none
         while True:
             next_el = soup.select_one(self.sitemap.pagination_selector)
             if not next_el:
                 break
-            # The icon is within a link; move to its parent anchor if present
             link = next_el.parent.get("href") if next_el.parent and next_el.parent.name == "a" else next_el.get("href")
             next_url = self._abs(link)
             if not next_url:
@@ -84,14 +92,14 @@ class TronicLkScraper(SupplierScraper):
             time.sleep(0.2)
 
     def _parse_product_page(self, url: str) -> Optional[SupplierResult]:
+        if not self._is_valid_product_link(url):
+            return None
         soup = self._get(url)
         if not soup:
             return None
-        # validate that this is a product page with required fields
         name_el = soup.select_one(self.sitemap.name_selector)
         code_el = soup.select_one(self.sitemap.code_selector)
         price_el = soup.select_one(self.sitemap.price_selector)
-        # If essential fields missing, treat as invalid and skip
         if not (name_el or price_el):
             return None
         name = name_el.get_text(strip=True) if name_el else None
@@ -115,7 +123,6 @@ class TronicLkScraper(SupplierScraper):
         )
 
     def search(self, query: str, max_results: int = 40) -> List[SupplierResult]:
-        # For query search, fallback to site search page behavior
         search_url = f"https://tronic.lk/?s={requests.utils.quote(query)}&post_type=product"
         soup = self._get(search_url)
         if not soup:
@@ -123,7 +130,7 @@ class TronicLkScraper(SupplierScraper):
         results = []
         for a in soup.select(self.sitemap.product_link_selector)[:max_results * 2]:
             href = self._abs(a.get("href"))
-            if not href or "/product/" not in href:
+            if not self._is_valid_product_link(href):
                 continue
             res = self._parse_product_page(href)
             if res:
@@ -133,7 +140,6 @@ class TronicLkScraper(SupplierScraper):
         return results
 
     def crawl_all(self) -> List[SupplierResult]:
-        # Crawl categories and pagination using sitemap
         start_url = "https://tronic.lk/shop/products"
         root = self._get(start_url)
         if not root:
@@ -146,7 +152,7 @@ class TronicLkScraper(SupplierScraper):
             for soup in self._iter_category_pages(cat):
                 for a in soup.select(self.sitemap.product_link_selector):
                     href = self._abs(a.get("href"))
-                    if not href or "/product/" not in href:
+                    if not self._is_valid_product_link(href):
                         continue
                     res = self._parse_product_page(href)
                     if res:

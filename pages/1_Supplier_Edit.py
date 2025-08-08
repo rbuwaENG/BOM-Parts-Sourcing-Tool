@@ -14,17 +14,19 @@ from app.scheduler import write_progress, read_progress, set_last_update_time
 st.set_page_config(page_title="Supplier Edit", layout="wide")
 st.title("Supplier Management")
 
-# Load suppliers
+# Load suppliers as plain dicts to avoid detached instance errors
 with get_session() as session:
     suppliers = session.query(Supplier).order_by(Supplier.name).all()
+    supplier_rows = [{"id": s.id, "name": s.name, "is_active": s.is_active} for s in suppliers]
 
-supplier_names = [s.name for s in suppliers]
+supplier_names = [s["name"] for s in supplier_rows]
 sel_name = st.selectbox("Select supplier", options=supplier_names)
 if not sel_name:
     st.stop()
 
+selected = next(s for s in supplier_rows if s["name"] == sel_name)
 with get_session() as session:
-    supplier = session.query(Supplier).filter_by(name=sel_name).first()
+    supplier = session.query(Supplier).get(selected["id"])
     rule = session.query(SupplierRule).filter_by(supplier_id=supplier.id).first()
 
 st.subheader(f"Edit: {supplier.name}")
@@ -150,7 +152,7 @@ if preview:
             "Purchase Link": p.purchase_url,
         })
     df = pd.DataFrame(rows)
-    tabs = st.tabs(["Page 1", "Page 2", "Page 3"])  # simple tabbed preview stub
+    tabs = st.tabs(["Page 1", "Page 2", "Page 3"])
     per_tab = max(1, int(page_size))
     for i, tab in enumerate(tabs):
         with tab:

@@ -4,6 +4,7 @@ from typing import Optional
 from datetime import datetime
 
 import pandas as pd
+import bootstrap  # noqa: F401
 import streamlit as st
 from sqlalchemy.orm import Session
 

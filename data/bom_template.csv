@@ -1,0 +1,5 @@
+Part_Number,Description,Quantity,Package,Voltage,Other_Specs
+LM7805,Linear Regulator 5V,10,TO-220,5V,1A
+NE555,Timer IC,25,DIP-8,5V-15V,Astable/Monostable
+,10k Resistor,100,0603,,1%
+AMS1117-3.3,3.3V Regulator,15,SOT-223,3.3V,800mA

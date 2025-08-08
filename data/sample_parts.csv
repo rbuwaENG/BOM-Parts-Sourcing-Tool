@@ -1,0 +1,4 @@
+Supplier,Part_Number,Name,Description,Package,Voltage,Other_Specs,Stock,Price,Datasheet,Purchase_Link
+Tronic.lk,LM7805,Linear Regulator 5V,Voltage regulator 5V,TO-220,5V,1A,In Stock,Rs 150,https://www.ti.com/lit/ds/symlink/lm7805.pdf,https://tronic.lk/product/lm7805/
+LCSC,AMS1117-3.3,AMS1117 3.3V LDO,Low dropout regulator,SOT-223,3.3V,800mA,In Stock,$0.05,https://www.advanced-monolithic.com/pdf/ds1117.pdf,https://www.lcsc.com/product-detail/AMS1117-3-3
+Mouser,NE555,NE555 Timer IC,"Precise timer, DIP or SOIC",DIP-8,5V-15V,Astable/Monostable,Available,$0.69,https://www.ti.com/lit/ds/symlink/ne555.pdf,https://www.mouser.com/ProductDetail/595-NE555P

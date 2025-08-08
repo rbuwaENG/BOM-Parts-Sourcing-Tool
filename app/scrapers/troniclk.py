@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Iterable
 from urllib.parse import urljoin
 import time
-import re
 
 import requests
 from bs4 import BeautifulSoup
@@ -30,14 +29,14 @@ class TronicLkScraper(SupplierScraper):
     def __init__(self, sitemap: Optional[TronicSitemap] = None):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
         }
         self.base_url = "https://tronic.lk/"
         if sitemap is None:
-            # Default to provided sitemap
             self.sitemap = TronicSitemap(
-                category_selector="#navbar-ex1-collapse ul li ul.dropdown-menu li ul li a",  # relaxed selector
-                pagination_selector="i.fa-angle-right",
-                product_link_selector=".product-desc > a",
+                category_selector="#navbar-ex1-collapse ul li ul.dropdown-menu li ul li a",
+                pagination_selector="a[rel=next], li.pagination-next a, i.fa-angle-right",
+                product_link_selector="a[href*='/product/']",
                 name_selector="tr",
                 code_selector="tr",
                 price_selector="tr",
@@ -62,71 +61,37 @@ class TronicLkScraper(SupplierScraper):
         return urljoin(self.base_url, href)
 
     def _is_valid_product_link(self, url: Optional[str]) -> bool:
-        if not url or "/product/" not in url:
-            return False
-        try:
-            r = requests.get(url, headers=self.headers, timeout=15, allow_redirects=True)
-            if r.status_code >= 400:
-                return False
-            return "/product/" in r.url
-        except Exception:
-            return False
-
-    def _iter_pages(self, start_url: str):
-        soup = self._get(start_url)
-        if not soup:
-            return
-        yield soup
-        while True:
-            next_icon = soup.select_one(self.sitemap.pagination_selector)
-            if not next_icon:
-                break
-            a = next_icon.find_parent("a")
-            href = a.get("href") if a else next_icon.get("href")
-            next_url = self._abs(href)
-            if not next_url:
-                break
-            soup = self._get(next_url)
-            if not soup:
-                break
-            yield soup
-            time.sleep(0.2)
+        return bool(url and "/product/" in url)
 
     def _extract_label_value(self, soup: BeautifulSoup, label: str) -> Optional[str]:
-        # Find a table row where any cell contains the label (case-insensitive), then return the second td text
         for tr in soup.select("tr"):
             cells = tr.find_all(["td", "th"]) or []
             if not cells:
                 continue
             row_text = " ".join(c.get_text(" ", strip=True) for c in cells).lower()
             if label.lower() in row_text and len(cells) >= 2:
-                # Try to get the second td specifically
                 tds = tr.find_all("td")
                 if len(tds) >= 2:
                     val = tds[1].get_text(" ", strip=True)
                     if val:
                         return val
-                # Fallback to second cell
                 val = cells[1].get_text(" ", strip=True)
                 if val:
                     return val
         return None
 
     def _parse_product_page(self, url: str) -> Optional[SupplierResult]:
-        if not self._is_valid_product_link(url):
-            return None
         soup = self._get(url)
         if not soup:
             return None
         name = self._extract_label_value(soup, "Name")
         code = self._extract_label_value(soup, "Code")
         price = self._extract_label_value(soup, "Price")
-        # If neither name nor price was found, skip
         if not (name or price):
             return None
         desc_nodes = soup.select(self.sitemap.description_selector)
         description = " \n".join([n.get_text(" ", strip=True) for n in desc_nodes]) if desc_nodes else None
-        img_el = soup.select_one(self.sitemap.image_selector)
+        img_el = soup.select_one(self.sitemap.image_selector) or soup.select_one(".images img, .woocommerce-product-gallery__image img, img")
         img_url = self._abs(img_el.get("src") if img_el else None)
         return SupplierResult(
             supplier=self.supplier_name,
@@ -141,7 +106,46 @@ class TronicLkScraper(SupplierScraper):
             extra={"code": code},
         )
 
-    def search(self, query: str, max_results: int = 80) -> List[SupplierResult]:
+    def _find_listing_start(self) -> Optional[str]:
+        candidates = [
+            "https://tronic.lk/shop/products",
+            "https://tronic.lk/products",
+            "https://tronic.lk/?post_type=product&s=",
+        ]
+        for u in candidates:
+            soup = self._get(u)
+            if not soup:
+                continue
+            links = [self._abs(a.get("href")) for a in soup.select(self.sitemap.product_link_selector)]
+            links = [l for l in links if self._is_valid_product_link(l)]
+            if links:
+                return u
+        return None
+
+    def _iter_pages(self, start_url: str) -> Iterable[BeautifulSoup]:
+        soup = self._get(start_url)
+        if not soup:
+            return
+        yield soup
+        while True:
+            next_link = None
+            # try several pagination patterns
+            for sel in ["a[rel=next]", "li.pagination-next a", "i.fa-angle-right"]:
+                el = soup.select_one(sel)
+                if el:
+                    a = el if el.name == "a" else el.find_parent("a")
+                    href = a.get("href") if a else el.get("href")
+                    next_link = self._abs(href)
+                    break
+            if not next_link:
+                break
+            soup = self._get(next_link)
+            if not soup:
+                break
+            yield soup
+            time.sleep(0.2)
+
+    def search(self, query: str, max_results: int = 100) -> List[SupplierResult]:
         search_url = f"https://tronic.lk/?s={requests.utils.quote(query)}&post_type=product"
         results: List[SupplierResult] = []
         for soup in self._iter_pages(search_url):
@@ -157,8 +161,9 @@ class TronicLkScraper(SupplierScraper):
         return results
 
     def crawl_all(self) -> List[SupplierResult]:
-        # Crawl all products from All Products listing via pagination (no categories needed)
-        start_url = "https://tronic.lk/shop/products"
+        start_url = self._find_listing_start()
+        if not start_url:
+            return []
         results: List[SupplierResult] = []
         for soup in self._iter_pages(start_url):
             for a in soup.select(self.sitemap.product_link_selector):

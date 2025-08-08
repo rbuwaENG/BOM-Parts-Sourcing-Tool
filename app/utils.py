@@ -22,9 +22,24 @@ REQUIRED_COLUMNS = [
 
 
 def read_bom_file(uploaded) -> pd.DataFrame:
-    if uploaded.name.lower().endswith(".csv"):
-        return pd.read_csv(uploaded)
+    filename = uploaded.name.lower()
+    if filename.endswith(".csv"):
+        # Read raw bytes and try multiple encodings
+        raw: bytes = uploaded.read()
+        encodings_to_try = ["utf-8", "utf-8-sig", "cp1252", "latin1"]
+        last_err = None
+        for enc in encodings_to_try:
+            try:
+                text = raw.decode(enc, errors="strict")
+                return pd.read_csv(io.StringIO(text))
+            except Exception as exc:
+                last_err = exc
+                continue
+        # Fallback: replace undecodable bytes to avoid hard failure
+        text = raw.decode("utf-8", errors="replace")
+        return pd.read_csv(io.StringIO(text))
     else:
+        # Excel handler
         return pd.read_excel(uploaded)
 
 

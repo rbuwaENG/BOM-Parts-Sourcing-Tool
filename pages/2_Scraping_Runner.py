@@ -1,6 +1,7 @@
 import json
 import time
 import pandas as pd
+import bootstrap  # noqa: F401
 import streamlit as st
 
 from datetime import datetime

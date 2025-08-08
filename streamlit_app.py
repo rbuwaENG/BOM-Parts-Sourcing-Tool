@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 import pandas as pd
+# Ensure local package resolution
+import bootstrap  # noqa: F401
 import streamlit as st
 from sqlalchemy.orm import Session
 

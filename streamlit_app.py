@@ -24,9 +24,16 @@ APP_TITLE = "BOM Sourcing & Suggestion Platform"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# Header
+# Header + Simple Nav
 st.title(APP_TITLE)
 st.caption("Find exact and alternative electronic parts across multiple suppliers.")
+nav = st.radio("Navigation", ["Home", "Supplier Management", "Scraping Runner"], horizontal=True)
+if nav == "Supplier Management":
+    st.page_link("pages/1_Supplier_Edit.py", label="Open Supplier Management", icon="🛠️")
+    st.stop()
+elif nav == "Scraping Runner":
+    st.page_link("pages/2_Scraping_Runner.py", label="Open Scraping Runner", icon="🏃")
+    st.stop()
 
 # Ensure DB initialized and seed sample data on first run
 ensure_db_initialized()
@@ -95,7 +102,6 @@ if uploaded_file is not None:
             elapsed = time.time() - start
         st.success(f"Processing done in {elapsed:.1f}s")
 
-        # Color styling by similarity
         def similarity_color(val: Any) -> str:
             try:
                 v = float(val)
@@ -108,7 +114,6 @@ if uploaded_file is not None:
             return "background-color: #FEE2E2"
 
         st.subheader("🔍 Available Matches")
-        # Separate available results (where a match was found)
         available_df = results_df[results_df["Found Part Name"].notna()].copy()
         if not available_df.empty:
             st.dataframe(
@@ -123,7 +128,6 @@ if uploaded_file is not None:
         else:
             st.caption("No direct matches found above the similarity threshold.")
 
-        # Download buttons
         csv_bytes = dataframe_to_download_bytes(results_df, kind="csv")
         xlsx_bytes = dataframe_to_download_bytes(results_df, kind="xlsx")
         col1, col2 = st.columns(2)
@@ -132,9 +136,7 @@ if uploaded_file is not None:
         with col2:
             st.download_button("⬇ Download Excel", data=xlsx_bytes, file_name="bom_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        # Suggestions section: group unique alternatives across unmatched parts
         st.subheader("▼ Suggestions (Unique Alternatives)")
-        # Flatten and deduplicate by (supplier, found_part_name, purchase_link)
         seen = set()
         unique_rows = []
         for _, suggestions in suggestions_map.items():
@@ -146,7 +148,6 @@ if uploaded_file is not None:
                 unique_rows.append(srow)
         if unique_rows:
             suggestions_df = pd.DataFrame(unique_rows)
-            # Order columns and rename
             if not suggestions_df.empty:
                 suggestions_df = suggestions_df[[
                     "found_part_name",
@@ -180,30 +181,4 @@ if uploaded_file is not None:
         else:
             st.caption("No alternative suggestions available.")
 
-# Section: Add new supplier
-st.divider()
-st.subheader("➕ Add New Supplier")
-with st.form("add_supplier_form", clear_on_submit=False):
-    name = st.text_input("Supplier Name")
-    base_url = st.text_input("Shop Homepage URL")
-    search_template = st.text_input("Product Search URL Template (use {query})")
-    st.caption("Example: https://tronic.lk/?s={query}&post_type=product")
-    auto_detect = st.checkbox("Attempt automatic HTML structure detection", value=True)
-
-    submitted = st.form_submit_button("Save Supplier")
-    if submitted:
-        with get_session() as session:
-            supplier = Supplier(name=name.strip(), base_url=base_url.strip() or None)
-            session.add(supplier)
-            session.flush()
-
-            rule = SupplierRule(
-                supplier_id=supplier.id,
-                search_url_template=search_template.strip() if search_template else None,
-            )
-            session.add(rule)
-            session.commit()
-        st.success("Supplier saved. Go to 'Supplier Rules' page to customize selectors if auto-detect fails.")
-
-# Footer
 st.caption("Disclaimer: Prices and availability may change. Data is provided as-is.")

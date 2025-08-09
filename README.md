@@ -77,7 +77,6 @@ A Streamlit-based web app to upload a Bill of Materials (BOM), search multiple s
 4. Filter by supplier and similarity in the sidebar, download CSV/Excel.
 
 ## Notes on Scraping
-- Tronic.lk scraper crawls all categories and paginated pages, deduplicates product links, and fetches details concurrently.
 - Some suppliers have dynamic content; integrate Playwright if server-side HTML is insufficient.
 - Broken product links are skipped gracefully.
 

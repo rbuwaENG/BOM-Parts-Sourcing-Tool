@@ -120,46 +120,48 @@ with tab_suppliers:
             custom_file = st.file_uploader("Custom Product File", type=["csv", "xlsx"], key="custom_csv")
             if custom_file is not None and sel_name:
                 try:
-                    # Robust read for CSV/Excel
-                    if custom_file.name.lower().endswith(".csv"):
-                        raw = custom_file.read()
-                        # Try multiple encodings
-                        for enc in ("utf-8", "utf-8-sig", "cp1252", "latin1"):
-                            try:
-                                text = raw.decode(enc)
-                                df = pd.read_csv(io.StringIO(text))
-                                break
-                            except Exception:
-                                df = None
-                        if df is None:
-                            raise ValueError("Unable to decode CSV with common encodings")
-                    else:
-                        df = pd.read_excel(custom_file)
-                    st.dataframe(df.head(50), use_container_width=True)
-                    if st.button("Ingest Custom List"):
-                        with get_session() as session:
-                            sup = session.query(Supplier).filter_by(name=sel_name).first()
-                            if not sup:
-                                st.error("Selected supplier not found.")
-                            else:
-                                to_insert = []
-                                for _, r in df.iterrows():
-                                    part = Part(
-                                        supplier_id=sup.id,
-                                        part_number=str(r.get("Part_Number")) if pd.notna(r.get("Part_Number")) else None,
-                                        name=str(r.get("Name")) if pd.notna(r.get("Name")) else None,
-                                        description=str(r.get("Description")) if pd.notna(r.get("Description")) else None,
-                                        stock=str(r.get("Stock")) if pd.notna(r.get("Stock")) else None,
-                                        price_tiers_json=json.dumps([{ "qty": 1, "price": str(r.get("Price")) if pd.notna(r.get("Price")) else "" }]),
-                                        datasheet_url=str(r.get("Datasheet")) if pd.notna(r.get("Datasheet")) else None,
-                                        purchase_url=str(r.get("Purchase_Link")) if pd.notna(r.get("Purchase_Link")) else None,
-                                        image_url=str(r.get("Image")) if pd.notna(r.get("Image")) else None,
-                                    )
-                                    to_insert.append(part)
-                                if to_insert:
-                                    session.bulk_save_objects(to_insert, return_defaults=False)
-                                    session.commit()
-                                    st.success(f"Ingested {len(to_insert)} products into {sel_name}.")
+                                    # Robust read for CSV/Excel
+                if custom_file.name.lower().endswith(".csv"):
+                    raw = custom_file.read()
+                    for enc in ("utf-8", "utf-8-sig", "cp1252", "latin1"):
+                        try:
+                            text = raw.decode(enc)
+                            df = pd.read_csv(io.StringIO(text))
+                            break
+                        except Exception:
+                            df = None
+                    if df is None:
+                        raise ValueError("Unable to decode CSV with common encodings")
+                else:
+                    df = pd.read_excel(custom_file)
+                st.dataframe(df.head(50), use_container_width=True)
+                if st.button("Ingest Custom List"):
+                    from app.utils import infer_custom_product_mapping, normalize_custom_records
+                    mapping = infer_custom_product_mapping(df)
+                    records = normalize_custom_records(df, mapping)
+                    with get_session() as session:
+                        sup = session.query(Supplier).filter_by(name=sel_name).first()
+                        if not sup:
+                            st.error("Selected supplier not found.")
+                        else:
+                            to_insert = []
+                            for rec in records:
+                                part = Part(
+                                    supplier_id=sup.id,
+                                    part_number=rec.get("part_number"),
+                                    name=rec.get("name"),
+                                    description=rec.get("description"),
+                                    stock=rec.get("stock"),
+                                    price_tiers_json=json.dumps([{ "qty": 1, "price": rec.get("price") or "" }]),
+                                    datasheet_url=rec.get("datasheet"),
+                                    purchase_url=rec.get("purchase_link"),
+                                    image_url=rec.get("image"),
+                                )
+                                to_insert.append(part)
+                            if to_insert:
+                                session.bulk_save_objects(to_insert, return_defaults=False)
+                                session.commit()
+                                st.success(f"Ingested {len(to_insert)} products into {sel_name}.")
                 except Exception as exc:
                     st.error(f"Failed to read custom CSV: {exc}")
 

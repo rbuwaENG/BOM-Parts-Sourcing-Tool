@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from pathlib import Path
-from typing import Iterable, Tuple, List, Dict
+from typing import Iterable, Tuple, List, Dict, Optional
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -141,3 +142,116 @@ def dataframe_to_download_bytes(df: pd.DataFrame, kind: str = "csv") -> bytes:
         return buf.read()
     else:
         raise ValueError("Unsupported kind")
+
+
+# -------- Custom product list inference --------
+_url_re = re.compile(r"^https?://", re.IGNORECASE)
+_img_re = re.compile(r"\.(png|jpe?g|gif|webp|bmp)(\?.*)?$", re.IGNORECASE)
+_pdf_re = re.compile(r"\.pdf(\?.*)?$", re.IGNORECASE)
+
+
+def _norm_header(s: str) -> str:
+    return "".join(ch for ch in s.lower() if ch.isalnum())
+
+
+def _is_url(v: object) -> bool:
+    if v is None:
+        return False
+    try:
+        return bool(_url_re.match(str(v).strip()))
+    except Exception:
+        return False
+
+
+def infer_custom_product_mapping(df: pd.DataFrame) -> Dict[str, Optional[str]]:
+    headers = list(df.columns)
+    norm_map = {h: _norm_header(str(h)) for h in headers}
+
+    def pick_by_keywords(keywords: List[str]) -> Optional[str]:
+        for h in headers:
+            nh = norm_map[h]
+            if any(k in nh for k in keywords):
+                return h
+        return None
+
+    # Heuristic picks
+    name_col = pick_by_keywords(["name", "title", "product", "item", "component"]) or headers[0]
+    desc_col = pick_by_keywords(["description", "desc", "details", "spec"])
+    price_col = pick_by_keywords(["price", "cost", "unit", "amount", "rate"])
+    stock_col = pick_by_keywords(["stock", "availability", "qty", "quantity", "available"])  # note: may be qty
+
+    # URL-based detection
+    url_counts = {h: int(df[h].apply(_is_url).sum()) for h in headers}
+
+    # datasheet: prefer pdf urls or header indicates datasheet
+    datasheet_col = pick_by_keywords(["datasheet", "datashett", "data", "sheet"]) or None
+    if not datasheet_col:
+        # choose any column with many urls and mostly pdf
+        best = None
+        best_pdf = 0
+        for h in headers:
+            if url_counts[h] == 0:
+                continue
+            pdf_hits = int(df[h].astype(str).str.contains(_pdf_re).sum())
+            if pdf_hits > best_pdf:
+                best_pdf = pdf_hits
+                best = h
+        datasheet_col = best
+
+    # image: url column with image extension
+    image_col = pick_by_keywords(["image", "img", "picture", "photo", "thumbnail"]) or None
+    if not image_col:
+        best = None
+        best_img = 0
+        for h in headers:
+            if url_counts[h] == 0:
+                continue
+            img_hits = int(df[h].astype(str).str.contains(_img_re).sum())
+            if img_hits > best_img:
+                best_img = img_hits
+                best = h
+        image_col = best
+
+    # purchase link: url column with many urls, not image/pdf
+    purchase_col = pick_by_keywords(["link", "url", "href", "buy", "product"]) or None
+    if not purchase_col:
+        best = None
+        best_count = 0
+        for h in headers:
+            if url_counts[h] == 0:
+                continue
+            non_asset = int(df[h].apply(lambda v: _is_url(v) and not _img_re.search(str(v)) and not _pdf_re.search(str(v))).sum())
+            if non_asset > best_count:
+                best_count = non_asset
+                best = h
+        purchase_col = best
+
+    # part number: optional
+    pn_col = pick_by_keywords(["mpn", "part", "sku", "code", "model"]) or None
+
+    return {
+        "part_number": pn_col,
+        "name": name_col,
+        "description": desc_col,
+        "price": price_col,
+        "stock": stock_col,
+        "datasheet": datasheet_col,
+        "purchase_link": purchase_col,
+        "image": image_col,
+    }
+
+
+def normalize_custom_records(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) -> List[Dict[str, Optional[str]]]:
+    out: List[Dict[str, Optional[str]]] = []
+    for _, r in df.iterrows():
+        out.append({
+            "part_number": str(r.get(mapping["part_number"])) if mapping.get("part_number") and pd.notna(r.get(mapping["part_number"])) else None,
+            "name": str(r.get(mapping["name"])) if mapping.get("name") and pd.notna(r.get(mapping["name"])) else None,
+            "description": str(r.get(mapping["description"])) if mapping.get("description") and pd.notna(r.get(mapping["description"])) else None,
+            "price": str(r.get(mapping["price"])) if mapping.get("price") and pd.notna(r.get(mapping["price"])) else None,
+            "stock": str(r.get(mapping["stock"])) if mapping.get("stock") and pd.notna(r.get(mapping["stock"])) else None,
+            "datasheet": str(r.get(mapping["datasheet"])) if mapping.get("datasheet") and pd.notna(r.get(mapping["datasheet"])) else None,
+            "purchase_link": str(r.get(mapping["purchase_link"])) if mapping.get("purchase_link") and pd.notna(r.get(mapping["purchase_link"])) else None,
+            "image": str(r.get(mapping["image"])) if mapping.get("image") and pd.notna(r.get(mapping["image"])) else None,
+        })
+    return out

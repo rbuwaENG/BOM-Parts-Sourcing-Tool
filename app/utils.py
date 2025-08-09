@@ -12,7 +12,7 @@ from .db import get_session
 from .models import Supplier, Part
 
 REQUIRED_COLUMNS = [
-    "Part_Number",
+    "Part_Name",
     "Description",
     "Quantity",
     "Package",
@@ -48,12 +48,11 @@ def normalize_bom_columns(df: pd.DataFrame) -> pd.DataFrame:
         return "".join(ch for ch in s.lower() if ch.isalnum())
 
     alias_map: Dict[str, str] = {
-        # Part number
-        "partnumber": "Part_Number",
-        "mpn": "Part_Number",
-        "partno": "Part_Number",
-        "mfrpart": "Part_Number",
-        "manufacturerpartnumber": "Part_Number",
+        # Part name
+        "partname": "Part_Name",
+        "name": "Part_Name",
+        "item": "Part_Name",
+        "component": "Part_Name",
         # Description
         "description": "Description",
         "desc": "Description",

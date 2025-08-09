@@ -4,7 +4,7 @@ import json
 import time
 import threading
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import pandas as pd
 # Ensure local package resolution
@@ -60,7 +60,7 @@ with st.sidebar:
         st.success("Refresh started. Check progress in the Suppliers & Scraping Runner tab.")
 
 # Tabs for usability
-tab_bom, tab_suppliers = st.tabs(["📂 BOM", "🛠️ Suppliers & Scraping Runner"])
+tab_bom, tab_suppliers, tab_inventory = st.tabs(["📂 BOM", "🛠️ Suppliers & Scraping Runner", "📦 Inventory by Supplier"])
 
 with tab_suppliers:
     st.subheader("Supplier Settings & Scraping")
@@ -193,7 +193,6 @@ with tab_suppliers:
         for s in all_suppliers:
             p = read_progress(f"scrape:{s.name}")
             status = p.get("status", "idle")
-            # Map statuses for clarity
             if status == "error":
                 status_label = "Failed"
             elif status == "skipped":
@@ -363,5 +362,64 @@ with tab_bom:
                 )
             else:
                 st.caption("No alternative suggestions available.")
+
+with tab_inventory:
+    st.subheader("Inventory by Supplier")
+    with get_session() as session:
+        inv_supplier_names = [s.name for s in session.query(Supplier).order_by(Supplier.name).all()]
+    sel_inv = st.multiselect("Suppliers", options=inv_supplier_names, default=inv_supplier_names)
+    page_size = st.number_input("Page size", min_value=25, max_value=1000, value=100, step=25)
+    page_num = st.number_input("Page", min_value=1, value=1, step=1)
+
+    def _primary_price(price_json: Optional[str]) -> Optional[str]:
+        if not price_json:
+            return None
+        try:
+            tiers = json.loads(price_json)
+            if isinstance(tiers, list) and tiers:
+                return tiers[0].get("price") or tiers[0].get("unit_price")
+        except Exception:
+            return None
+        return None
+
+    with get_session() as session:
+        q = session.query(Part, Supplier.name.label("supplier_name")).join(Supplier)
+        if sel_inv:
+            q = q.filter(Supplier.name.in_(sel_inv))
+        total = q.count()
+        offset = (int(page_num) - 1) * int(page_size)
+        rows_q = q.order_by(Part.id.desc()).offset(offset).limit(int(page_size)).all()
+
+    items = []
+    for part, sup_name in rows_q:
+        items.append({
+            "Supplier": sup_name,
+            "Part Number": part.part_number,
+            "Name": part.name,
+            "Description": part.description,
+            "Stock": part.stock,
+            "Price": _primary_price(part.price_tiers_json),
+            "Datasheet": part.datasheet_url,
+            "Purchase": part.purchase_url,
+            "Image": part.image_url,
+        })
+    st.caption(f"Total items: {total}")
+    inv_df = pd.DataFrame(items)
+    st.dataframe(
+        inv_df,
+        use_container_width=True,
+        column_config={
+            "Image": st.column_config.ImageColumn("Image", width="small"),
+            "Datasheet": st.column_config.LinkColumn("Datasheet"),
+            "Purchase": st.column_config.LinkColumn("Purchase"),
+        },
+    )
+    if not inv_df.empty:
+        st.download_button(
+            "⬇ Download Current Page (CSV)",
+            data=inv_df.to_csv(index=False).encode("utf-8"),
+            file_name="inventory_page.csv",
+            mime="text/csv",
+        )
 
 st.caption("Disclaimer: Prices and availability may change. Data is provided as-is.")

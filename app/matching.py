@@ -121,6 +121,7 @@ def find_best_matches_for_bom(
             part = best[0]
             supplier_name = session.get(Supplier, part.supplier_id).name
             results.append({
+                "Status": "Available",
                 "BOM Part Name": bom.description or bom.part_number,
                 "Found Part Name": part.name or part.part_number,
                 "Supplier": supplier_name,
@@ -133,6 +134,7 @@ def find_best_matches_for_bom(
             })
         else:
             results.append({
+                "Status": "Unavailable",
                 "BOM Part Name": bom.description or bom.part_number,
                 "Found Part Name": None,
                 "Supplier": None,

@@ -51,9 +51,16 @@ with st.sidebar:
     st.subheader("Database")
     last_update = get_last_update_time()
     st.caption(f"Last Database Update: {last_update if last_update else 'Never'}")
+    if st.button("Refresh Database (Background)"):
+        def _bg_refresh():
+            with get_session() as session:
+                write_progress("scrape:all", {"pct": 0.0, "scraped": 0, "stored": 0, "status": "running"})
+                run_all_scrapers(session, progress_key="scrape:all", batch_size=500)
+        threading.Thread(target=_bg_refresh, daemon=True).start()
+        st.success("Refresh started. Check progress in the Suppliers & Scraping Runner tab.")
 
 # Tabs for usability
-tab_bom, tab_suppliers = st.tabs(["📂 BOM", "🛠️ Suppliers & Scraping"])
+tab_bom, tab_suppliers = st.tabs(["📂 BOM", "🛠️ Suppliers & Scraping Runner"])
 
 with tab_suppliers:
     st.subheader("Supplier Settings & Scraping")
@@ -282,7 +289,7 @@ with tab_bom:
                 return "background-color: #FEE2E2"
 
             st.subheader("🔍 Available Matches")
-            available_df = results_df[results_df["Found Part Name"].notna()].copy()
+            available_df = results_df[results_df["Status"] == "Available"].copy()
             if not available_df.empty:
                 st.dataframe(
                     available_df.style.applymap(similarity_color, subset=["Similarity %"]),
@@ -295,6 +302,14 @@ with tab_bom:
                 )
             else:
                 st.caption("No direct matches found above the similarity threshold.")
+
+            st.subheader("❌ Unavailable in Store")
+            unavailable_df = results_df[results_df["Status"] == "Unavailable"].copy()
+            if not unavailable_df.empty:
+                st.dataframe(
+                    unavailable_df[["BOM Part Name", "Similarity %", "Status"]],
+                    use_container_width=True,
+                )
 
             csv_bytes = dataframe_to_download_bytes(results_df, kind="csv")
             xlsx_bytes = dataframe_to_download_bytes(results_df, kind="xlsx")

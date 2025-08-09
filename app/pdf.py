@@ -27,15 +27,12 @@ def _coerce_price(value: Optional[str]) -> float:
 def build_budget_pdf(bom_df: pd.DataFrame, results_df: pd.DataFrame) -> bytes:
     # Merge to get quantities alongside matches
     df = results_df.copy()
-    # Expect Quantity in BOM
     bom_view = bom_df.copy()
-    # Normalize join key: use BOM Part Name column to map back Description or Part_Number
     bom_view["_join_key"] = bom_view["Part_Name"].fillna("")
     df["_join_key"] = df["BOM Part Name"].fillna("")
     merged = pd.merge(df, bom_view[["_join_key", "Quantity"]], on="_join_key", how="left")
     merged["Quantity"] = merged["Quantity"].fillna(0).astype(int)
 
-    # Compute unit price numeric and line total
     merged["Unit Price"] = merged["Price"].apply(_coerce_price)
     merged["Line Total"] = merged["Unit Price"] * merged["Quantity"]
     total_budget = float(merged["Line Total"].sum())
@@ -45,11 +42,12 @@ def build_budget_pdf(bom_df: pd.DataFrame, results_df: pd.DataFrame) -> bytes:
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph("BOM Budget Summary", styles["Title"]))
+    # Header with version
+    story.append(Paragraph("BOM Budget Summary (v1.0)", styles["Title"]))
     story.append(Spacer(1, 6))
 
-    # Summary table
-    summary_data = [["Total Budget", f"{total_budget:,.2f}"]]
+    # Summary table with Total Price
+    summary_data = [["Total Price", f"{total_budget:,.2f}"]]
     summary_table = Table(summary_data, hAlign='LEFT')
     summary_table.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
@@ -61,7 +59,6 @@ def build_budget_pdf(bom_df: pd.DataFrame, results_df: pd.DataFrame) -> bytes:
     story.append(summary_table)
     story.append(Spacer(1, 10))
 
-    # Detailed table
     columns = [
         "BOM Part Name",
         "Found Part Name",
@@ -95,6 +92,14 @@ def build_budget_pdf(bom_df: pd.DataFrame, results_df: pd.DataFrame) -> bytes:
         ('ALIGN', (3,1), (3,-1), 'RIGHT'),
         ('ALIGN', (5,1), (6,-1), 'RIGHT'),
     ]))
+
+    # Scale the table to available width
+    avail_width = A4[0] - (doc.leftMargin + doc.rightMargin)
+    # Measure column count and derive widths proportionally
+    col_count = len(columns)
+    col_width = avail_width / col_count
+    table._argW = [col_width] * col_count
+
     story.append(table)
 
     doc.build(story)

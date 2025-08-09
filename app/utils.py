@@ -255,3 +255,86 @@ def normalize_custom_records(df: pd.DataFrame, mapping: Dict[str, Optional[str]]
             "image": str(r.get(mapping["image"])) if mapping.get("image") and pd.notna(r.get(mapping["image"])) else None,
         })
     return out
+
+
+def _normalize_text(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).lower().split())
+
+
+def match_bom_to_parts_list(bom_df: pd.DataFrame, parts_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    from rapidfuzz import fuzz
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    # Prepare parts text corpus (Description + Name)
+    parts_desc = parts_df.get("Description", pd.Series([""] * len(parts_df)))
+    parts_name = parts_df.get("Name", pd.Series([""] * len(parts_df)))
+    parts_text = (parts_desc.fillna("") + " " + parts_name.fillna("")).apply(_normalize_text)
+
+    vectorizer = TfidfVectorizer(stop_words="english")
+    parts_matrix = vectorizer.fit_transform(parts_text.tolist())
+
+    matched_rows = []
+    updated_bom_rows = []
+
+    for _, b in bom_df.iterrows():
+        bom_name = _normalize_text(b.get("Part_Name"))
+        bom_specs = _normalize_text(b.get("Description")) + " " + _normalize_text(b.get("Package")) + " " + _normalize_text(b.get("Voltage")) + " " + _normalize_text(b.get("Other_Specs"))
+        bom_vec = vectorizer.transform([bom_specs])
+        tfidf_scores = cosine_similarity(bom_vec, parts_matrix).ravel() * 100.0  # 0-100
+
+        # Fuzzy name ratio
+        name_scores = parts_name.fillna("").apply(lambda x: float(fuzz.ratio(bom_name, _normalize_text(x))))
+
+        total_scores = 0.8 * tfidf_scores + 0.2 * name_scores.values
+        best_idx = int(total_scores.argmax()) if len(total_scores) else -1
+
+        if best_idx >= 0:
+            pr = parts_df.iloc[best_idx]
+            # Build matched parts table row (Updated Parts List format)
+            matched_rows.append({
+                "Category": pr.get("Category"),
+                "Category-href": pr.get("Category-href"),
+                "Name": pr.get("Name"),
+                "Code": pr.get("Code"),
+                "Price": pr.get("Price"),
+                "Description": pr.get("Description"),
+                "Img": pr.get("Img"),
+                "_similarity": round(float(total_scores[best_idx]), 1),
+            })
+            # Build updated BOM row (original BOM fields + matched fields)
+            updated_row = b.to_dict()
+            updated_row.update({
+                "Matched_Category": pr.get("Category"),
+                "Matched_Category_href": pr.get("Category-href"),
+                "Matched_Name": pr.get("Name"),
+                "Matched_Code": pr.get("Code"),
+                "Matched_Price": pr.get("Price"),
+                "Matched_Description": pr.get("Description"),
+                "Matched_Img": pr.get("Img"),
+                "Matched_Similarity": round(float(total_scores[best_idx]), 1),
+            })
+            updated_bom_rows.append(updated_row)
+        else:
+            # No parts; keep BOM with NaNs on matched fields
+            updated_row = b.to_dict()
+            updated_row.update({
+                "Matched_Category": None,
+                "Matched_Category_href": None,
+                "Matched_Name": None,
+                "Matched_Code": None,
+                "Matched_Price": None,
+                "Matched_Description": None,
+                "Matched_Img": None,
+                "Matched_Similarity": 0.0,
+            })
+            updated_bom_rows.append(updated_row)
+
+    matched_df = pd.DataFrame(matched_rows)
+    # Return only the specified columns for matched table (drop similarity helper)
+    if not matched_df.empty and "_similarity" in matched_df.columns:
+        matched_df = matched_df.drop(columns=["_similarity"])
+    updated_bom_df = pd.DataFrame(updated_bom_rows)
+    return matched_df, updated_bom_df

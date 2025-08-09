@@ -35,6 +35,12 @@ def _normalize_text(value: Optional[str]) -> str:
     return " ".join(str(value).lower().split())
 
 
+def _normalize_pn(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return "".join(ch for ch in str(value).upper() if ch.isalnum() or ch in ("-", "_", "."))
+
+
 def _levenshtein_similarity(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
@@ -53,8 +59,8 @@ def _tfidf_cosine_similarity(text_a: str, text_b: str) -> float:
 def compute_weighted_similarity(bom: BomRow, part: Part) -> float:
     part_num_sim = 0.0
     if bom.part_number and part.part_number:
-        pn_a = _normalize_text(bom.part_number)
-        pn_b = _normalize_text(part.part_number)
+        pn_a = _normalize_pn(bom.part_number)
+        pn_b = _normalize_pn(part.part_number)
         if pn_a and pn_b:
             part_num_sim = _levenshtein_similarity(pn_a, pn_b)
 
@@ -67,7 +73,7 @@ def compute_weighted_similarity(bom: BomRow, part: Part) -> float:
     spec_sim = _tfidf_cosine_similarity(bom_specs, part_specs)
 
     if bom.part_number and part.part_number:
-        combined = 0.5 * part_num_sim + 0.5 * spec_sim
+        combined = 0.8 * part_num_sim + 0.2 * spec_sim
     else:
         combined = spec_sim
 
@@ -110,10 +116,37 @@ def find_best_matches_for_bom(
             return any(s in p.stock.lower() for s in ["in stock", "available", "+", ">", "stock:"])
 
         candidates = [p for p in parts if stock_ok(p)]
+
+        # 1) Exact PN match first
+        exact_matches = []
+        if bom.part_number:
+            target = _normalize_pn(bom.part_number)
+            exact_matches = [p for p in candidates if _normalize_pn(p.part_number) == target]
+
         scored: List[Tuple[Part, float]] = []
-        for p in candidates:
-            score = compute_weighted_similarity(bom, p)
-            scored.append((p, score))
+        if exact_matches:
+            # Exact PN considered 100 similarity; still compute specs for ranking ties
+            for p in exact_matches:
+                score = compute_weighted_similarity(bom, p)
+                score = max(score, 100.0)  # ensure exacts are treated as top
+                scored.append((p, score))
+        else:
+            # 2) Fuzzy PN match if PN present
+            if bom.part_number:
+                for p in candidates:
+                    if not p.part_number:
+                        continue
+                    score = _levenshtein_similarity(_normalize_pn(bom.part_number), _normalize_pn(p.part_number))
+                    if score > 0:
+                        # Blend in a little spec similarity to break ties
+                        score = 0.9 * score + 0.1 * compute_weighted_similarity(bom, p)
+                        scored.append((p, score))
+            # 3) Fallback to spec-only match if no PN at all or fuzzy list empty
+            if not bom.part_number or not scored:
+                for p in candidates:
+                    score = compute_weighted_similarity(bom, p)
+                    scored.append((p, score))
+
         scored.sort(key=lambda x: x[1], reverse=True)
 
         best = scored[0] if scored else (None, 0.0)
@@ -145,21 +178,30 @@ def find_best_matches_for_bom(
                 "Purchase Link": None,
                 "Similarity %": round(best[1], 1) if best[0] is not None else 0.0,
             })
-            alt = []
-            for p, s in scored[:20]:
-                supplier_name = session.get(Supplier, p.supplier_id).name
-                alt.append({
-                    "found_part_name": p.name or p.part_number,
-                    "supplier": supplier_name,
-                    "price": _extract_primary_price(p.price_tiers_json),
-                    "stock": p.stock,
-                    "image": p.image_url,
-                    "datasheet_link": p.datasheet_url,
-                    "purchase_link": p.purchase_url,
-                    "similarity": round(s, 1),
-                })
-            if alt:
-                suggestions_map[idx] = alt
+
+        # Suggestions (top 20 unique)
+        alt = []
+        seen_keys = set()
+        for p, s in scored[:50]:
+            sup_name = session.get(Supplier, p.supplier_id).name
+            key = (sup_name, p.part_number or p.name, p.purchase_url)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            alt.append({
+                "found_part_name": p.name or p.part_number,
+                "supplier": sup_name,
+                "price": _extract_primary_price(p.price_tiers_json),
+                "stock": p.stock,
+                "image": p.image_url,
+                "datasheet_link": p.datasheet_url,
+                "purchase_link": p.purchase_url,
+                "similarity": round(float(s), 1),
+            })
+            if len(alt) >= 20:
+                break
+        if alt:
+            suggestions_map[idx] = alt
 
     df = pd.DataFrame(results)
     return df, suggestions_map

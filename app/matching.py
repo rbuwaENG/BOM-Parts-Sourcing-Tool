@@ -8,7 +8,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy.orm import Session
 
-from .models import Part, Supplier
+from .models import Part, Supplier, SupplierRule
 
 
 class BomRow:
@@ -51,10 +51,22 @@ def _tfidf_cosine_similarity(text_a: str, text_b: str) -> float:
 
 
 def compute_name_similarity(bom: BomRow, part: Part) -> float:
-    # Strictly name based
     a = _normalize_text(bom.part_name)
     b = _normalize_text(part.name)
     return _levenshtein_similarity(a, b)
+
+
+def _purchase_link_or_fallback(session: Session, part: Part, default_query: Optional[str]) -> Optional[str]:
+    if part.purchase_url:
+        return part.purchase_url
+    supplier = session.get(Supplier, part.supplier_id)
+    # Try rule search template
+    rule = session.query(SupplierRule).filter_by(supplier_id=part.supplier_id).first()
+    if rule and rule.search_url_template and default_query:
+        from requests.utils import quote
+        return rule.search_url_template.replace("{query}", quote(default_query))
+    # Fallback to supplier base_url
+    return supplier.base_url if supplier and supplier.base_url else None
 
 
 def find_best_matches_for_bom(
@@ -98,7 +110,6 @@ def find_best_matches_for_bom(
             for p in candidates:
                 score = compute_name_similarity(bom, p)
                 if score > 0:
-                    # small spec tie-breaker
                     spec_sim = _tfidf_cosine_similarity(
                         _normalize_text(bom.description),
                         _normalize_text(p.description),
@@ -123,7 +134,7 @@ def find_best_matches_for_bom(
                 "Stock Availability": part.stock,
                 "Image": part.image_url,
                 "Datasheet Link": part.datasheet_url,
-                "Purchase Link": part.purchase_url,
+                "Purchase Link": _purchase_link_or_fallback(session, part, default_query=part.name or bom.part_name),
                 "Similarity %": round(best[1], 1),
             })
         else:
@@ -145,7 +156,8 @@ def find_best_matches_for_bom(
         seen = set()
         for p, s in scored[:50]:
             sup = session.get(Supplier, p.supplier_id).name
-            key = (sup, p.name, p.purchase_url)
+            link = _purchase_link_or_fallback(session, p, default_query=p.name)
+            key = (sup, p.name, link)
             if key in seen:
                 continue
             seen.add(key)
@@ -156,7 +168,7 @@ def find_best_matches_for_bom(
                 "stock": p.stock,
                 "image": p.image_url,
                 "datasheet_link": p.datasheet_url,
-                "purchase_link": p.purchase_url,
+                "purchase_link": link,
                 "similarity": round(float(s), 1),
             })
             if len(alt) >= 20:

@@ -1,16 +1,17 @@
 #  BOM Parts Sourcing Website
 
-A Streamlit-based web app to upload a Bill of Materials (BOM), search multiple suppliers for availability and pricing, and suggest alternatives with similarity scoring. Supports caching to a local database and adding new suppliers with auto-detection or manual selector mapping.
+A Streamlit-based web app to upload a Bill of Materials (BOM), search multiple suppliers for availability and pricing, and suggest alternatives with similarity scoring. Supports caching to a local database and adding new suppliers with auto-detection or manual selector mapping. Now includes integrated supplier management and a background scraping runner capable of handling 5,000+ items per run.
 
 ## Features
 - BOM upload (CSV/Excel) with validation and preview
 - Exact and fuzzy matching across database-cached supplier data
-- Supplier scrapers (Tronic.lk, LCSC/JLCPCB, Mouser) with graceful fallbacks
+- Supplier scrapers (Tronic.lk, LCSC/JLCPCB placeholder, Mouser placeholder)
 - Automatic HTML structure detection + manual override for new suppliers
 - Weighted similarity scoring with RapidFuzz + TF-IDF
 - Datasheet links (Octopart API optional) and purchase links
 - Streamlit UI with filtering, sorting, color-coded similarity, and downloads
 - SQLite caching with periodic update hooks
+- Background scraping in batches with progress reporting
 
 ## Tech Stack
 - Frontend: Streamlit
@@ -19,23 +20,25 @@ A Streamlit-based web app to upload a Bill of Materials (BOM), search multiple s
 - DB: SQLite via SQLAlchemy
 - Matching: RapidFuzz, scikit-learn (TF-IDF)
 - File parsing: Pandas, OpenPyXL
-- Scheduling: APScheduler or cron
+- Scheduling/Progress: Lightweight JSON progress store; background thread runner
 
 ## Project Structure
 ```
 .
-├── streamlit_app.py
+├── streamlit_app.py                # Main app; includes Supplier settings & Scraping
 ├── requirements.txt
 ├── README.md
 ├── .streamlit/
 │   └── config.toml
 ├── app/
 │   ├── __init__.py
+│   ├── bootstrap.py (imported as bootstrap)
 │   ├── db.py
 │   ├── models.py
 │   ├── matching.py
 │   ├── datasheets.py
-│   ├── scheduler.py
+│   ├── scheduler.py                # progress and last-update tracking
+│   ├── runner.py                   # background scraping runner
 │   ├── utils.py
 │   └── scrapers/
 │       ├── __init__.py
@@ -53,7 +56,7 @@ A Streamlit-based web app to upload a Bill of Materials (BOM), search multiple s
 1. Python 3.10+
 2. Install dependencies:
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements.txt --break-system-packages
    ```
 3. Optional: Install Playwright browsers (only if you want dynamic scraping):
    ```bash
@@ -64,23 +67,22 @@ A Streamlit-based web app to upload a Bill of Materials (BOM), search multiple s
    streamlit run streamlit_app.py
    ```
 
-## Environment Variables
-- `OCTOPART_API_KEY` (optional): Enables better datasheet fetching.
-
 ## Usage
-1. Start the app and upload your BOM (CSV/Excel). Use the provided template.
-2. Review the preview and process. The app will look up parts from cache and scrape suppliers as needed.
-3. Filter results by supplier, similarity, and in-stock. Download CSV/Excel.
-4. Add new suppliers via the UI: provide a search URL or homepage, let the app auto-detect, or map selectors manually.
-
-## Data and Caching
-- SQLite database stored at `data/cache.db`.
-- Supplier rules and parts are persisted. First run seeds sample parts for a better demo.
-- You can schedule periodic refresh using cron or `APScheduler`. See `app/scheduler.py`.
+1. Open the app. Supplier Management and Scraping controls are on the main page:
+   - Select a supplier, toggle active/enabled, and update sitemap JSON if needed.
+   - Click “Run All Scrapers (Background)” to populate the DB (handles 5,000+ items per run, batch inserts).
+   - Progress bar shows per-supplier scraped/stored counts and percentage.
+2. Upload your BOM (CSV/Excel). The app normalizes common column aliases (e.g., MPN → Part_Number, Qty → Quantity).
+3. Review preview, then “Upload & Process” to match against the database.
+4. Filter by supplier and similarity in the sidebar, download CSV/Excel.
 
 ## Notes on Scraping
-- Some suppliers employ anti-bot measures. The app uses headers and backs off to cached data if scraping fails.
-- LCSC/Mouser can be challenging; manual mapping or Playwright may be required.
+- Tronic.lk scraper crawls all categories and paginated pages, deduplicates product links, and fetches details concurrently.
+- Some suppliers have dynamic content; integrate Playwright if server-side HTML is insufficient.
+- Broken product links are skipped gracefully.
+
+## Environment Variables
+- `OCTOPART_API_KEY` (optional): Enables better datasheet fetching (stub included).
 
 ## License
 MIT

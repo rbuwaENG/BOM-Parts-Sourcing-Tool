@@ -30,7 +30,7 @@ def build_budget_pdf(bom_df: pd.DataFrame, results_df: pd.DataFrame) -> bytes:
     # Expect Quantity in BOM
     bom_view = bom_df.copy()
     # Normalize join key: use BOM Part Name column to map back Description or Part_Number
-    bom_view["_join_key"] = bom_view["Description"].fillna("") + bom_view["Part_Number"].fillna("")
+    bom_view["_join_key"] = bom_view["Part_Name"].fillna("")
     df["_join_key"] = df["BOM Part Name"].fillna("")
     merged = pd.merge(df, bom_view[["_join_key", "Quantity"]], on="_join_key", how="left")
     merged["Quantity"] = merged["Quantity"].fillna(0).astype(int)

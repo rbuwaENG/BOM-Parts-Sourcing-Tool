@@ -104,11 +104,25 @@ with tab_suppliers:
     # Allow custom uploads for a supplier (pre-scraped list)
     custom_expander = st.expander("📥 Upload Custom Product List for Selected Supplier", expanded=False)
     with custom_expander:
-        st.caption("Upload a CSV with columns: Part_Number, Name, Description, Price, Stock, Datasheet, Purchase_Link, Image")
-        custom_file = st.file_uploader("Custom Product CSV", type=["csv"], key="custom_csv")
+        st.caption("Upload a CSV or Excel (.xlsx) with columns: Part_Number, Name, Description, Price, Stock, Datasheet, Purchase_Link, Image")
+        custom_file = st.file_uploader("Custom Product File", type=["csv", "xlsx"], key="custom_csv")
         if custom_file is not None and sel_name:
             try:
-                df = pd.read_csv(custom_file)
+                # Robust read for CSV/Excel
+                if custom_file.name.lower().endswith(".csv"):
+                    raw = custom_file.read()
+                    # Try multiple encodings
+                    for enc in ("utf-8", "utf-8-sig", "cp1252", "latin1"):
+                        try:
+                            text = raw.decode(enc)
+                            df = pd.read_csv(io.StringIO(text))
+                            break
+                        except Exception:
+                            df = None
+                    if df is None:
+                        raise ValueError("Unable to decode CSV with common encodings")
+                else:
+                    df = pd.read_excel(custom_file)
                 st.dataframe(df.head(50), use_container_width=True)
                 if st.button("Ingest Custom List"):
                     with get_session() as session:

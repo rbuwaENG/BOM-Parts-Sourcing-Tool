@@ -27,7 +27,6 @@ from app.runner import run_all_scrapers
 
 APP_TITLE = "BOM Sourcing & Suggestion Platform"
 
-st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # Header
 st.title(APP_TITLE)

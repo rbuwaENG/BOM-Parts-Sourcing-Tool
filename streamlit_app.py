@@ -35,7 +35,6 @@ st.caption("Find exact and alternative electronic parts across multiple supplier
 
 # Ensure DB initialized and seed sample data on first run
 ensure_db_initialized()
-initialize_database_with_sample_data()
 
 # Sidebar controls
 with st.sidebar:

@@ -409,15 +409,15 @@ with tab_bom:
 
             csv_bytes = dataframe_to_download_bytes(results_df, kind="csv")
             xlsx_bytes = dataframe_to_download_bytes(results_df, kind="xlsx")
-            from app.pdf import build_budget_pdf
-            pdf_bytes = build_budget_pdf(bom_df=bom_df, results_df=results_df)
+            from app.budget_excel import build_budget_excel
+            budget_xlsx = build_budget_excel(bom_df=bom_df, results_df=results_df)
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.download_button("⬇ Download CSV", data=csv_bytes, file_name="bom_results.csv", mime="text/csv")
             with col2:
                 st.download_button("⬇ Download Excel", data=xlsx_bytes, file_name="bom_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             with col3:
-                st.download_button("📄 Download Budget PDF", data=pdf_bytes, file_name="bom_budget.pdf", mime="application/pdf")
+                st.download_button("📊 Download Budget Excel", data=budget_xlsx, file_name="bom_budget.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab_inventory:
     st.subheader("Inventory by Supplier")

@@ -8,13 +8,15 @@ import bootstrap  # noqa: F401
 import streamlit as st
 from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import get_session, ensure_db_initialized
 from app.models import Supplier, SupplierRule, Part
 from app.scrapers.troniclk import TronicLkScraper, TronicSitemap
 from app.scheduler import write_progress, read_progress, set_last_update_time
 
 st.set_page_config(page_title="Supplier Edit", layout="wide")
 st.title("Supplier Management")
+# Ensure DB and tables exist
+ensure_db_initialized()
 
 # Load suppliers as plain dicts to avoid detached instance errors
 with get_session() as session:

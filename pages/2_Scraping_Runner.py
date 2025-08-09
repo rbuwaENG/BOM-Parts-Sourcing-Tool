@@ -5,13 +5,15 @@ import bootstrap  # noqa: F401
 import streamlit as st
 
 from datetime import datetime
-from app.db import get_session
+from app.db import get_session, ensure_db_initialized
 from app.models import Supplier, SupplierRule, Part
 from app.scheduler import read_progress, write_progress, set_last_update_time
 from app.scrapers.troniclk import TronicLkScraper, TronicSitemap
 
 st.set_page_config(page_title="Scraping Runner", layout="wide")
 st.title("Scraping Runner & Monitor")
+# Ensure DB and tables exist
+ensure_db_initialized()
 
 run_all = st.button("Run All Scrapers Now")
 

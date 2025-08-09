@@ -38,43 +38,50 @@ def run_all_scrapers(session: Session, progress_key: str, batch_size: int = 250)
     for s in suppliers:
         rule: Optional[SupplierRule] = session.query(SupplierRule).filter_by(supplier_id=s.id).first()
         if rule and rule.is_enabled is False:
+            write_progress(f"scrape:{s.name}", {"pct": 100.0, "scraped": 0, "stored": 0, "status": "skipped"})
             continue
         key = f"scrape:{s.name}"
         write_progress(key, {"pct": 0.0, "scraped": 0, "stored": 0, "status": "running"})
 
-        if s.name == "Tronic.lk":
-            scraper = _build_tronic_scraper(rule)
-            results = scraper.crawl_all()
-            scraped = 0
-            stored = 0
-            to_insert: List[Part] = []
-            total = max(len(results), 1)
-            for r in results:
-                scraped += 1
-                p = Part(
-                    supplier_id=s.id,
-                    part_number=r.found_part_number,
-                    name=r.name,
-                    description=r.description,
-                    stock=r.stock,
-                    price_tiers_json=json.dumps([{ "qty": 1, "price": r.price or "" }]),
-                    datasheet_url=r.datasheet_link,
-                    purchase_url=r.purchase_link,
-                    image_url=r.image_url,
-                )
-                to_insert.append(p)
-                if len(to_insert) >= batch_size:
+        try:
+            if s.name == "Tronic.lk":
+                scraper = _build_tronic_scraper(rule)
+                results = scraper.crawl_all()
+                scraped = 0
+                stored = 0
+                to_insert: List[Part] = []
+                total = max(len(results), 1)
+                for r in results:
+                    scraped += 1
+                    p = Part(
+                        supplier_id=s.id,
+                        part_number=r.found_part_number,
+                        name=r.name,
+                        description=r.description,
+                        stock=r.stock,
+                        price_tiers_json=json.dumps([{ "qty": 1, "price": r.price or "" }]),
+                        datasheet_url=r.datasheet_link,
+                        purchase_url=r.purchase_link,
+                        image_url=r.image_url,
+                    )
+                    to_insert.append(p)
+                    if len(to_insert) >= batch_size:
+                        session.bulk_save_objects(to_insert, return_defaults=False)
+                        session.commit()
+                        stored += len(to_insert)
+                        to_insert.clear()
+                        write_progress(key, {"pct": min(100.0, scraped*100.0/total), "scraped": scraped, "stored": stored, "status": "running"})
+                if to_insert:
                     session.bulk_save_objects(to_insert, return_defaults=False)
                     session.commit()
                     stored += len(to_insert)
-                    to_insert.clear()
-                    write_progress(key, {"pct": min(100.0, scraped*100.0/total), "scraped": scraped, "stored": stored, "status": "running"})
-            if to_insert:
-                session.bulk_save_objects(to_insert, return_defaults=False)
-                session.commit()
-                stored += len(to_insert)
-            write_progress(key, {"pct": 100.0, "scraped": scraped, "stored": stored, "status": "done"})
-        else:
-            write_progress(key, {"pct": 100.0, "scraped": 0, "stored": 0, "status": "skipped"})
+                write_progress(key, {"pct": 100.0, "scraped": scraped, "stored": stored, "status": "done"})
+            else:
+                write_progress(key, {"pct": 100.0, "scraped": 0, "stored": 0, "status": "skipped"})
+        except Exception:
+            # Mark supplier as failed
+            write_progress(key, {"pct": 0.0, "scraped": 0, "stored": 0, "status": "error"})
+            session.rollback()
+            continue
 
     set_last_update_time(datetime.utcnow())

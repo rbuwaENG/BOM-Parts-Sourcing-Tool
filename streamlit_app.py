@@ -2,6 +2,7 @@ import os
 import io
 import json
 import time
+import threading
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -18,9 +19,11 @@ from app.utils import (
     validate_bom_columns,
     initialize_database_with_sample_data,
     dataframe_to_download_bytes,
+    normalize_bom_columns,
 )
 from app.matching import find_best_matches_for_bom
-from app.scheduler import get_last_update_time, trigger_background_refresh
+from app.scheduler import get_last_update_time, write_progress
+from app.runner import run_all_scrapers
 
 APP_TITLE = "BOM Sourcing & Suggestion Platform"
 
@@ -46,12 +49,67 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Database")
-    if st.button("Refresh Cached Data Now"):
-        trigger_background_refresh()
-        st.success("Background refresh triggered.")
-
     last_update = get_last_update_time()
     st.caption(f"Last Database Update: {last_update if last_update else 'Never'}")
+
+# Section: Supplier Management & Scraping (merged)
+st.subheader("Supplier Settings & Scraping")
+with get_session() as session:
+    suppliers = session.query(Supplier).order_by(Supplier.name).all()
+    supplier_rows = [{"id": s.id, "name": s.name, "is_active": s.is_active} for s in suppliers]
+
+sel_col1, sel_col2 = st.columns([2, 1])
+with sel_col1:
+    sel_name = st.selectbox("Select supplier", options=[s["name"] for s in supplier_rows])
+with sel_col2:
+    run_all = st.button("Run All Scrapers (Background)")
+
+if sel_name:
+    selected = next(s for s in supplier_rows if s["name"] == sel_name)
+    with get_session() as session:
+        supplier = session.get(Supplier, selected["id"])  # type: ignore[arg-type]
+        rule = session.query(SupplierRule).filter_by(supplier_id=supplier.id).first()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        is_active = st.toggle("Supplier active", value=bool(supplier.is_active))
+    with col2:
+        rule_enabled = st.toggle("Scraper enabled", value=bool(rule.is_enabled) if rule else True)
+
+    st.markdown("Sitemap JSON (used by scraper):")
+    initial_json = rule.sitemap_json if rule and rule.sitemap_json else ""
+    new_json = st.text_area("Sitemap JSON", value=initial_json, height=180, placeholder="Paste JSON here")
+
+    if st.button("Save Supplier Settings"):
+        with get_session() as session:
+            s = session.get(Supplier, supplier.id)
+            s.is_active = is_active
+            r = session.query(SupplierRule).filter_by(supplier_id=s.id).first()
+            if not r:
+                r = SupplierRule(supplier_id=s.id)
+                session.add(r)
+            r.is_enabled = rule_enabled
+            r.sitemap_json = new_json.strip() or None
+            session.commit()
+        st.success("Saved supplier and rule settings.")
+
+    # Live progress
+    from app.scheduler import read_progress
+    progress_key = f"scrape:{supplier.name}"
+    prog = read_progress(progress_key)
+    st.progress(min(max(float(prog.get("pct", 0.0)) / 100.0, 0.0), 1.0), text=f"{supplier.name}: {prog.get('pct', 0)}%")
+    st.caption(f"Scraped: {prog.get('scraped', 0)} | Stored: {prog.get('stored', 0)} | Status: {prog.get('status', 'idle')}")
+
+# Background runner
+if run_all:
+    def _bg_run():
+        with get_session() as session:
+            write_progress("scrape:all", {"pct": 0.0, "scraped": 0, "stored": 0, "status": "running"})
+            run_all_scrapers(session, progress_key="scrape:all", batch_size=500)
+    threading.Thread(target=_bg_run, daemon=True).start()
+    st.success("Scraping started in background. Progress will update live.")
+
+st.divider()
 
 # Section 1: BOM Upload
 st.subheader("📂 Upload Your BOM")
@@ -67,17 +125,14 @@ with col_b:
         mime="text/csv",
     )
 
-# If DB has no parts, advise running scrapers first
 with get_session() as session:
     total_parts = session.query(Part).count()
 if total_parts == 0:
-    st.warning("No supplier data found. Please run scrapers (see 'Scraping Runner' page) before processing a BOM.")
+    st.warning("No supplier data found. Please run scrapers first before processing a BOM.")
 
 if uploaded_file is not None:
     try:
         bom_df = read_bom_file(uploaded_file)
-        # Normalize common column names to match expected schema
-        from app.utils import normalize_bom_columns
         bom_df = normalize_bom_columns(bom_df)
     except Exception as exc:
         st.error(f"Failed to read BOM file: {exc}")

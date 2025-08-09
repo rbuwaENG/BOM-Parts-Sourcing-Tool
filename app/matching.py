@@ -14,14 +14,14 @@ from .models import Part, Supplier
 class BomRow:
     def __init__(
         self,
-        part_number: Optional[str],
+        part_name: Optional[str],
         description: Optional[str],
         quantity: Optional[int],
         package: Optional[str],
         voltage: Optional[str],
         other_specs: Optional[str],
     ) -> None:
-        self.part_number = part_number
+        self.part_name = part_name
         self.description = description
         self.quantity = quantity
         self.package = package
@@ -33,12 +33,6 @@ def _normalize_text(value: Optional[str]) -> str:
     if not value:
         return ""
     return " ".join(str(value).lower().split())
-
-
-def _normalize_pn(value: Optional[str]) -> str:
-    if not value:
-        return ""
-    return "".join(ch for ch in str(value).upper() if ch.isalnum() or ch in ("-", "_", "."))
 
 
 def _levenshtein_similarity(a: str, b: str) -> float:
@@ -56,28 +50,11 @@ def _tfidf_cosine_similarity(text_a: str, text_b: str) -> float:
     return float(sim * 100.0)
 
 
-def compute_weighted_similarity(bom: BomRow, part: Part) -> float:
-    part_num_sim = 0.0
-    if bom.part_number and part.part_number:
-        pn_a = _normalize_pn(bom.part_number)
-        pn_b = _normalize_pn(part.part_number)
-        if pn_a and pn_b:
-            part_num_sim = _levenshtein_similarity(pn_a, pn_b)
-
-    def join_specs(desc, pkg, volt, other):
-        return " ".join([_normalize_text(x) for x in [desc, pkg, volt, other] if x])
-
-    bom_specs = join_specs(bom.description, bom.package, bom.voltage, bom.other_specs)
-    part_specs = join_specs(part.description, part.package, part.voltage, part.other_specs)
-
-    spec_sim = _tfidf_cosine_similarity(bom_specs, part_specs)
-
-    if bom.part_number and part.part_number:
-        combined = 0.8 * part_num_sim + 0.2 * spec_sim
-    else:
-        combined = spec_sim
-
-    return max(0.0, min(100.0, combined))
+def compute_name_similarity(bom: BomRow, part: Part) -> float:
+    # Strictly name based
+    a = _normalize_text(bom.part_name)
+    b = _normalize_text(part.name)
+    return _levenshtein_similarity(a, b)
 
 
 def find_best_matches_for_bom(
@@ -96,11 +73,10 @@ def find_best_matches_for_bom(
     suggestions_map: Dict[int, List[Dict[str, Any]]] = {}
 
     for idx, row in bom_df.iterrows():
-        pn = row.get("Part_Number")
-        pn = str(pn).strip() if pd.notna(pn) else None
-        pn = pn if pn else None
+        name = row.get("Part_Name")
+        name = str(name).strip() if pd.notna(name) else None
         bom = BomRow(
-            part_number=pn,
+            part_name=name,
             description=str(row.get("Description")).strip() if pd.notna(row.get("Description")) else None,
             quantity=int(row.get("Quantity")) if pd.notna(row.get("Quantity")) else None,
             package=str(row.get("Package")).strip() if pd.notna(row.get("Package")) else None,
@@ -115,37 +91,22 @@ def find_best_matches_for_bom(
                 return False
             return any(s in p.stock.lower() for s in ["in stock", "available", "+", ">", "stock:"])
 
-        candidates = [p for p in parts if stock_ok(p)]
-
-        # 1) Exact PN match first
-        exact_matches = []
-        if bom.part_number:
-            target = _normalize_pn(bom.part_number)
-            exact_matches = [p for p in candidates if _normalize_pn(p.part_number) == target]
+        candidates = [p for p in parts if stock_ok(p) and p.name]
 
         scored: List[Tuple[Part, float]] = []
-        if exact_matches:
-            # Exact PN considered 100 similarity; still compute specs for ranking ties
-            for p in exact_matches:
-                score = compute_weighted_similarity(bom, p)
-                score = max(score, 100.0)  # ensure exacts are treated as top
-                scored.append((p, score))
+        if bom.part_name:
+            for p in candidates:
+                score = compute_name_similarity(bom, p)
+                if score > 0:
+                    # small spec tie-breaker
+                    spec_sim = _tfidf_cosine_similarity(
+                        _normalize_text(bom.description),
+                        _normalize_text(p.description),
+                    )
+                    total = 0.9 * score + 0.1 * spec_sim
+                    scored.append((p, total))
         else:
-            # 2) Fuzzy PN match if PN present
-            if bom.part_number:
-                for p in candidates:
-                    if not p.part_number:
-                        continue
-                    score = _levenshtein_similarity(_normalize_pn(bom.part_number), _normalize_pn(p.part_number))
-                    if score > 0:
-                        # Blend in a little spec similarity to break ties
-                        score = 0.9 * score + 0.1 * compute_weighted_similarity(bom, p)
-                        scored.append((p, score))
-            # 3) Fallback to spec-only match if no PN at all or fuzzy list empty
-            if not bom.part_number or not scored:
-                for p in candidates:
-                    score = compute_weighted_similarity(bom, p)
-                    scored.append((p, score))
+            scored = []
 
         scored.sort(key=lambda x: x[1], reverse=True)
 
@@ -155,8 +116,8 @@ def find_best_matches_for_bom(
             supplier_name = session.get(Supplier, part.supplier_id).name
             results.append({
                 "Status": "Available",
-                "BOM Part Name": bom.description or bom.part_number,
-                "Found Part Name": part.name or part.part_number,
+                "BOM Part Name": bom.part_name,
+                "Found Part Name": part.name,
                 "Supplier": supplier_name,
                 "Price": _extract_primary_price(part.price_tiers_json),
                 "Stock Availability": part.stock,
@@ -168,7 +129,7 @@ def find_best_matches_for_bom(
         else:
             results.append({
                 "Status": "Unavailable",
-                "BOM Part Name": bom.description or bom.part_number,
+                "BOM Part Name": bom.part_name,
                 "Found Part Name": None,
                 "Supplier": None,
                 "Price": None,
@@ -179,18 +140,18 @@ def find_best_matches_for_bom(
                 "Similarity %": round(best[1], 1) if best[0] is not None else 0.0,
             })
 
-        # Suggestions (top 20 unique)
+        # Suggestions: top 20 unique by name+supplier+link
         alt = []
-        seen_keys = set()
+        seen = set()
         for p, s in scored[:50]:
-            sup_name = session.get(Supplier, p.supplier_id).name
-            key = (sup_name, p.part_number or p.name, p.purchase_url)
-            if key in seen_keys:
+            sup = session.get(Supplier, p.supplier_id).name
+            key = (sup, p.name, p.purchase_url)
+            if key in seen:
                 continue
-            seen_keys.add(key)
+            seen.add(key)
             alt.append({
-                "found_part_name": p.name or p.part_number,
-                "supplier": sup_name,
+                "found_part_name": p.name,
+                "supplier": sup,
                 "price": _extract_primary_price(p.price_tiers_json),
                 "stock": p.stock,
                 "image": p.image_url,

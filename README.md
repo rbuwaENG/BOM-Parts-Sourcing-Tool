@@ -1,4 +1,4 @@
-# Streamlit BOM Parts Sourcing Website
+#  BOM Parts Sourcing Website
 
 A Streamlit-based web app to upload a Bill of Materials (BOM), search multiple suppliers for availability and pricing, and suggest alternatives with similarity scoring. Supports caching to a local database and adding new suppliers with auto-detection or manual selector mapping. Now includes integrated supplier management and a background scraping runner capable of handling 5,000+ items per run.
 

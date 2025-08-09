@@ -28,14 +28,12 @@ from app.runner import run_all_scrapers
 APP_TITLE = "BOM Sourcing & Suggestion Platform"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-
 # Header
 st.title(APP_TITLE)
 st.caption("Find exact and alternative electronic parts across multiple suppliers.")
 
 # Ensure DB initialized and seed sample data on first run
 ensure_db_initialized()
-initialize_database_with_sample_data()
 
 # Sidebar controls
 with st.sidebar:

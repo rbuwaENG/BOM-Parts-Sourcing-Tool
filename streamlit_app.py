@@ -75,7 +75,6 @@ with tab_suppliers:
                     st.error("Supplier name is required.")
                 else:
                     with get_session() as session:
-                        # Ensure unique name
                         if session.query(Supplier).filter_by(name=new_name.strip()).first():
                             st.error("Supplier with this name already exists.")
                         else:
@@ -101,6 +100,42 @@ with tab_suppliers:
         run_all = st.button("Run All Scrapers (Background)")
     with sel_col3:
         refresh_progress = st.button("Refresh Progress")
+
+    # Allow custom uploads for a supplier (pre-scraped list)
+    custom_expander = st.expander("📥 Upload Custom Product List for Selected Supplier", expanded=False)
+    with custom_expander:
+        st.caption("Upload a CSV with columns: Part_Number, Name, Description, Price, Stock, Datasheet, Purchase_Link, Image")
+        custom_file = st.file_uploader("Custom Product CSV", type=["csv"], key="custom_csv")
+        if custom_file is not None and sel_name:
+            try:
+                df = pd.read_csv(custom_file)
+                st.dataframe(df.head(50), use_container_width=True)
+                if st.button("Ingest Custom List"):
+                    with get_session() as session:
+                        sup = session.query(Supplier).filter_by(name=sel_name).first()
+                        if not sup:
+                            st.error("Selected supplier not found.")
+                        else:
+                            to_insert = []
+                            for _, r in df.iterrows():
+                                part = Part(
+                                    supplier_id=sup.id,
+                                    part_number=str(r.get("Part_Number")) if pd.notna(r.get("Part_Number")) else None,
+                                    name=str(r.get("Name")) if pd.notna(r.get("Name")) else None,
+                                    description=str(r.get("Description")) if pd.notna(r.get("Description")) else None,
+                                    stock=str(r.get("Stock")) if pd.notna(r.get("Stock")) else None,
+                                    price_tiers_json=json.dumps([{ "qty": 1, "price": str(r.get("Price")) if pd.notna(r.get("Price")) else "" }]),
+                                    datasheet_url=str(r.get("Datasheet")) if pd.notna(r.get("Datasheet")) else None,
+                                    purchase_url=str(r.get("Purchase_Link")) if pd.notna(r.get("Purchase_Link")) else None,
+                                    image_url=str(r.get("Image")) if pd.notna(r.get("Image")) else None,
+                                )
+                                to_insert.append(part)
+                            if to_insert:
+                                session.bulk_save_objects(to_insert, return_defaults=False)
+                                session.commit()
+                                st.success(f"Ingested {len(to_insert)} products into {sel_name}.")
+            except Exception as exc:
+                st.error(f"Failed to read custom CSV: {exc}")
 
     if sel_name:
         selected = next(s for s in supplier_rows if s["name"] == sel_name)
@@ -131,15 +166,26 @@ with tab_suppliers:
                 session.commit()
             st.success("Saved supplier and rule settings.")
 
-        # Live progress for all suppliers (table) and selected one (bar)
         with get_session() as session:
             all_suppliers = session.query(Supplier).order_by(Supplier.name).all()
         rows = []
         for s in all_suppliers:
             p = read_progress(f"scrape:{s.name}")
+            status = p.get("status", "idle")
+            # Map statuses for clarity
+            if status == "error":
+                status_label = "Failed"
+            elif status == "skipped":
+                status_label = "Skipped"
+            elif status == "done":
+                status_label = "Completed"
+            elif status == "running":
+                status_label = "Running"
+            else:
+                status_label = "Idle"
             rows.append({
                 "Supplier": s.name,
-                "Status": p.get("status", "idle"),
+                "Status": status_label,
                 "Progress %": p.get("pct", 0.0),
                 "Scraped": p.get("scraped", 0),
                 "Stored": p.get("stored", 0),
@@ -152,7 +198,6 @@ with tab_suppliers:
             st.progress(min(max(float(prog.get("pct", 0.0)) / 100.0, 0.0), 1.0), text=f"{supplier.name}: {prog.get('pct', 0)}%")
             st.metric("Stored", value=prog.get("stored", 0), delta=None)
 
-    # Background runner
     if run_all:
         def _bg_run():
             with get_session() as session:
@@ -178,7 +223,7 @@ with tab_bom:
     with get_session() as session:
         total_parts = session.query(Part).count()
     if total_parts == 0:
-        st.warning("No supplier data found. Please run scrapers first before processing a BOM.")
+        st.warning("No supplier data found. Please run scrapers or upload a custom list first.")
 
     if uploaded_file is not None:
         try:

@@ -85,4 +85,10 @@ A Streamlit-based web app to upload a Bill of Materials (BOM), search multiple s
 - `OCTOPART_API_KEY` (optional): Enables better datasheet fetching (stub included).
 
 ## License
-MIT
+MIT. See `LICENSE`.
+
+## Contributing
+Please see `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md`.
+
+## Issue and PR Templates
+This repository includes templates under `.github/` to help file issues and pull requests.

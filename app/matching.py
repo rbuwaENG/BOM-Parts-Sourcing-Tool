@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, List, Tuple, Any, Optional
 
 import pandas as pd
@@ -12,14 +11,22 @@ from sqlalchemy.orm import Session
 from .models import Part, Supplier
 
 
-@dataclass
 class BomRow:
-    part_number: Optional[str]
-    description: Optional[str]
-    quantity: Optional[int]
-    package: Optional[str]
-    voltage: Optional[str]
-    other_specs: Optional[str]
+    def __init__(
+        self,
+        part_number: Optional[str],
+        description: Optional[str],
+        quantity: Optional[int],
+        package: Optional[str],
+        voltage: Optional[str],
+        other_specs: Optional[str],
+    ) -> None:
+        self.part_number = part_number
+        self.description = description
+        self.quantity = quantity
+        self.package = package
+        self.voltage = voltage
+        self.other_specs = other_specs
 
 
 def _normalize_text(value: Optional[str]) -> str:

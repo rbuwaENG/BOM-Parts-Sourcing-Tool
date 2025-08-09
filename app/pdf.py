@@ -5,7 +5,7 @@ from typing import Optional
 
 import pandas as pd
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -33,12 +33,21 @@ def build_budget_pdf(bom_df: pd.DataFrame, results_df: pd.DataFrame) -> bytes:
     merged = pd.merge(df, bom_view[["_join_key", "Quantity"]], on="_join_key", how="left")
     merged["Quantity"] = merged["Quantity"].fillna(0).astype(int)
 
+    # Unit Price from parts list Price column
     merged["Unit Price"] = merged["Price"].apply(_coerce_price)
-    merged["Line Total"] = merged["Unit Price"] * merged["Quantity"]
-    total_budget = float(merged["Line Total"].sum())
+    # Total Price per component
+    merged["Total Price"] = merged["Unit Price"] * merged["Quantity"]
+    overall_total = float(merged["Total Price"].sum())
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
+    )
     styles = getSampleStyleSheet()
     story = []
 
@@ -46,16 +55,20 @@ def build_budget_pdf(bom_df: pd.DataFrame, results_df: pd.DataFrame) -> bytes:
     story.append(Paragraph("BOM Budget Summary (v1.0)", styles["Title"]))
     story.append(Spacer(1, 6))
 
-    # Summary table with Total Price
-    summary_data = [["Total Price", f"{total_budget:,.2f}"]]
-    summary_table = Table(summary_data, hAlign='LEFT')
-    summary_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
-        ('INNERGRID', (0,0), (-1,-1), 0.25, colors.grey),
-        ('BOX', (0,0), (-1,-1), 0.5, colors.grey),
-        ('ALIGN', (1,0), (1,0), 'RIGHT'),
-    ]))
+    # Summary table with Overall Total Cost
+    summary_data = [["Overall Total Cost", f"{overall_total:,.2f}"]]
+    summary_table = Table(summary_data, hAlign="LEFT")
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+            ]
+        )
+    )
     story.append(summary_table)
     story.append(Spacer(1, 10))
 
@@ -66,39 +79,47 @@ def build_budget_pdf(bom_df: pd.DataFrame, results_df: pd.DataFrame) -> bytes:
         "Quantity",
         "Price",
         "Unit Price",
-        "Line Total",
+        "Total Price",
         "Purchase Link",
     ]
     table_data = [columns]
     for _, r in merged.iterrows():
-        table_data.append([
-            str(r.get("BOM Part Name", "")),
-            str(r.get("Found Part Name", "")),
-            str(r.get("Supplier", "")),
-            int(r.get("Quantity", 0)),
-            str(r.get("Price", "")),
-            f"{float(r.get('Unit Price', 0.0)):.2f}",
-            f"{float(r.get('Line Total', 0.0)):.2f}",
-            str(r.get("Purchase Link", "")),
-        ])
+        table_data.append(
+            [
+                str(r.get("BOM Part Name", "")),
+                str(r.get("Found Part Name", "")),
+                str(r.get("Supplier", "")),
+                int(r.get("Quantity", 0)),
+                str(r.get("Price", "")),
+                f"{float(r.get('Unit Price', 0.0)):.2f}",
+                f"{float(r.get('Total Price', 0.0)):.2f}",
+                str(r.get("Purchase Link", "")),
+            ]
+        )
 
     table = Table(table_data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.lightblue),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.black),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 10),
-        ('GRID', (0,0), (-1,-1), 0.25, colors.grey),
-        ('ALIGN', (3,1), (3,-1), 'RIGHT'),
-        ('ALIGN', (5,1), (6,-1), 'RIGHT'),
-    ]))
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightblue),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 9),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+                ("ALIGN", (5, 1), (6, -1), "RIGHT"),
+            ]
+        )
+    )
 
-    # Scale the table to available width
-    avail_width = A4[0] - (doc.leftMargin + doc.rightMargin)
-    # Measure column count and derive widths proportionally
+    # Scale table to available width (landscape)
+    avail_width = landscape(A4)[0] - (doc.leftMargin + doc.rightMargin)
     col_count = len(columns)
-    col_width = avail_width / col_count
-    table._argW = [col_width] * col_count
+    # Give more width to text-heavy columns
+    weights = [2, 2, 1.2, 0.8, 0.9, 0.9, 1.0, 2.0]
+    # Normalize weights
+    scale = avail_width / sum(weights)
+    table._argW = [w * scale for w in weights]
 
     story.append(table)
 

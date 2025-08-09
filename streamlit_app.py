@@ -100,93 +100,114 @@ with tab_suppliers:
 
     st.markdown("---")
 
-    sel_col1, sel_col2, sel_col3 = st.columns([2, 1, 1])
-    with sel_col1:
-        sel_name = st.selectbox("Select supplier", options=[s["name"] for s in supplier_rows])
+    sel_col2, sel_col3 = st.columns([1, 1])
     with sel_col2:
         run_all = st.button("Run All Scrapers (Background)")
     with sel_col3:
         refresh_progress = st.button("Refresh Progress")
 
-    # Allow custom uploads for a supplier (pre-scraped list)
-    custom_expander = st.expander("📥 Upload Custom Product List for Selected Supplier", expanded=False)
-    with custom_expander:
-        st.caption("Upload a CSV or Excel (.xlsx) with columns: Part_Number, Name, Description, Price, Stock, Datasheet, Purchase_Link, Image")
-        custom_file = st.file_uploader("Custom Product File", type=["csv", "xlsx"], key="custom_csv")
-        if custom_file is not None and sel_name:
-            try:
-                # Robust read for CSV/Excel
-                if custom_file.name.lower().endswith(".csv"):
-                    raw = custom_file.read()
-                    # Try multiple encodings
-                    for enc in ("utf-8", "utf-8-sig", "cp1252", "latin1"):
-                        try:
-                            text = raw.decode(enc)
-                            df = pd.read_csv(io.StringIO(text))
-                            break
-                        except Exception:
-                            df = None
-                    if df is None:
-                        raise ValueError("Unable to decode CSV with common encodings")
-                else:
-                    df = pd.read_excel(custom_file)
-                st.dataframe(df.head(50), use_container_width=True)
-                if st.button("Ingest Custom List"):
-                    with get_session() as session:
-                        sup = session.query(Supplier).filter_by(name=sel_name).first()
-                        if not sup:
-                            st.error("Selected supplier not found.")
-                        else:
-                            to_insert = []
-                            for _, r in df.iterrows():
-                                part = Part(
-                                    supplier_id=sup.id,
-                                    part_number=str(r.get("Part_Number")) if pd.notna(r.get("Part_Number")) else None,
-                                    name=str(r.get("Name")) if pd.notna(r.get("Name")) else None,
-                                    description=str(r.get("Description")) if pd.notna(r.get("Description")) else None,
-                                    stock=str(r.get("Stock")) if pd.notna(r.get("Stock")) else None,
-                                    price_tiers_json=json.dumps([{ "qty": 1, "price": str(r.get("Price")) if pd.notna(r.get("Price")) else "" }]),
-                                    datasheet_url=str(r.get("Datasheet")) if pd.notna(r.get("Datasheet")) else None,
-                                    purchase_url=str(r.get("Purchase_Link")) if pd.notna(r.get("Purchase_Link")) else None,
-                                    image_url=str(r.get("Image")) if pd.notna(r.get("Image")) else None,
-                                )
-                                to_insert.append(part)
-                            if to_insert:
-                                session.bulk_save_objects(to_insert, return_defaults=False)
-                                session.commit()
-                                st.success(f"Ingested {len(to_insert)} products into {sel_name}.")
-            except Exception as exc:
-                st.error(f"Failed to read custom CSV: {exc}")
-
-    if sel_name:
-        selected = next(s for s in supplier_rows if s["name"] == sel_name)
+    manage_expander = st.expander("✏️ Select & Manage Supplier", expanded=False)
+    with manage_expander:
         with get_session() as session:
-            supplier = session.get(Supplier, selected["id"])  # type: ignore[arg-type]
-            rule = session.query(SupplierRule).filter_by(supplier_id=supplier.id).first()
+            suppliers = session.query(Supplier).order_by(Supplier.name).all()
+            supplier_rows = [{"id": s.id, "name": s.name, "is_active": s.is_active} for s in suppliers]
+        sel_name = st.selectbox("Select supplier", options=[s["name"] for s in supplier_rows] if supplier_rows else [])
 
-        col1, col2 = st.columns(2)
-        with col1:
-            is_active = st.toggle("Supplier active", value=bool(supplier.is_active))
-        with col2:
-            rule_enabled = st.toggle("Scraper enabled", value=bool(rule.is_enabled) if rule else True)
+        # Allow custom uploads for a supplier (pre-scraped list)
+        custom_expander = st.expander("📥 Upload Custom Product List for Selected Supplier", expanded=False)
+        with custom_expander:
+            st.caption("Upload a CSV or Excel (.xlsx) with columns: Part_Number, Name, Description, Price, Stock, Datasheet, Purchase_Link, Image")
+            custom_file = st.file_uploader("Custom Product File", type=["csv", "xlsx"], key="custom_csv")
+            if custom_file is not None and sel_name:
+                try:
+                    # Robust read for CSV/Excel
+                    if custom_file.name.lower().endswith(".csv"):
+                        raw = custom_file.read()
+                        # Try multiple encodings
+                        for enc in ("utf-8", "utf-8-sig", "cp1252", "latin1"):
+                            try:
+                                text = raw.decode(enc)
+                                df = pd.read_csv(io.StringIO(text))
+                                break
+                            except Exception:
+                                df = None
+                        if df is None:
+                            raise ValueError("Unable to decode CSV with common encodings")
+                    else:
+                        df = pd.read_excel(custom_file)
+                    st.dataframe(df.head(50), use_container_width=True)
+                    if st.button("Ingest Custom List"):
+                        with get_session() as session:
+                            sup = session.query(Supplier).filter_by(name=sel_name).first()
+                            if not sup:
+                                st.error("Selected supplier not found.")
+                            else:
+                                to_insert = []
+                                for _, r in df.iterrows():
+                                    part = Part(
+                                        supplier_id=sup.id,
+                                        part_number=str(r.get("Part_Number")) if pd.notna(r.get("Part_Number")) else None,
+                                        name=str(r.get("Name")) if pd.notna(r.get("Name")) else None,
+                                        description=str(r.get("Description")) if pd.notna(r.get("Description")) else None,
+                                        stock=str(r.get("Stock")) if pd.notna(r.get("Stock")) else None,
+                                        price_tiers_json=json.dumps([{ "qty": 1, "price": str(r.get("Price")) if pd.notna(r.get("Price")) else "" }]),
+                                        datasheet_url=str(r.get("Datasheet")) if pd.notna(r.get("Datasheet")) else None,
+                                        purchase_url=str(r.get("Purchase_Link")) if pd.notna(r.get("Purchase_Link")) else None,
+                                        image_url=str(r.get("Image")) if pd.notna(r.get("Image")) else None,
+                                    )
+                                    to_insert.append(part)
+                                if to_insert:
+                                    session.bulk_save_objects(to_insert, return_defaults=False)
+                                    session.commit()
+                                    st.success(f"Ingested {len(to_insert)} products into {sel_name}.")
+                except Exception as exc:
+                    st.error(f"Failed to read custom CSV: {exc}")
 
-        st.markdown("Sitemap JSON (used by scraper):")
-        initial_json = rule.sitemap_json if rule and rule.sitemap_json else ""
-        new_json = st.text_area("Sitemap JSON", value=initial_json, height=180, placeholder="Paste JSON here")
-
-        if st.button("Save Supplier Settings"):
+        if sel_name:
+            selected = next(s for s in supplier_rows if s["name"] == sel_name)
             with get_session() as session:
-                s = session.get(Supplier, supplier.id)
-                s.is_active = is_active
-                r = session.query(SupplierRule).filter_by(supplier_id=s.id).first()
-                if not r:
-                    r = SupplierRule(supplier_id=s.id)
-                    session.add(r)
-                r.is_enabled = rule_enabled
-                r.sitemap_json = new_json.strip() or None
-                session.commit()
-            st.success("Saved supplier and rule settings.")
+                supplier = session.get(Supplier, selected["id"])  # type: ignore[arg-type]
+                rule = session.query(SupplierRule).filter_by(supplier_id=supplier.id).first()
 
+            col1, col2 = st.columns(2)
+            with col1:
+                is_active = st.toggle("Supplier active", value=bool(supplier.is_active))
+            with col2:
+                rule_enabled = st.toggle("Scraper enabled", value=bool(rule.is_enabled) if rule else True)
+
+            st.markdown("Sitemap JSON (used by scraper):")
+            initial_json = rule.sitemap_json if rule and rule.sitemap_json else ""
+            new_json = st.text_area("Sitemap JSON", value=initial_json, height=180, placeholder="Paste JSON here")
+
+            btn_col1, btn_col2 = st.columns([1,1])
+            with btn_col1:
+                if st.button("Save Supplier Settings"):
+                    with get_session() as session:
+                        s = session.get(Supplier, supplier.id)
+                        s.is_active = is_active
+                        r = session.query(SupplierRule).filter_by(supplier_id=s.id).first()
+                        if not r:
+                            r = SupplierRule(supplier_id=s.id)
+                            session.add(r)
+                        r.is_enabled = rule_enabled
+                        r.sitemap_json = new_json.strip() or None
+                        session.commit()
+                    st.success("Saved supplier and rule settings.")
+            with btn_col2:
+                st.markdown("**Danger Zone**")
+                del_confirm = st.checkbox("I understand this will delete the supplier and all related data.")
+                if st.button("Delete Supplier"):
+                    if not del_confirm:
+                        st.warning("Please confirm deletion by ticking the checkbox.")
+                    else:
+                        with get_session() as session:
+                            sup = session.get(Supplier, supplier.id)
+                            if sup:
+                                session.delete(sup)
+                                session.commit()
+                                st.success(f"Deleted supplier '{supplier.name}'. Please refresh the page.")
+
+        # Live progress for all suppliers (table) and selected one (bar)
         with get_session() as session:
             all_suppliers = session.query(Supplier).order_by(Supplier.name).all()
         rows = []
@@ -214,9 +235,10 @@ with tab_suppliers:
         with grid_col:
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
         with bar_col:
-            prog = read_progress(f"scrape:{supplier.name}")
-            st.progress(min(max(float(prog.get("pct", 0.0)) / 100.0, 0.0), 1.0), text=f"{supplier.name}: {prog.get('pct', 0)}%")
-            st.metric("Stored", value=prog.get("stored", 0), delta=None)
+            if supplier_rows:
+                prog = read_progress(f"scrape:{supplier_rows[0]['name']}")
+                st.progress(min(max(float(prog.get("pct", 0.0)) / 100.0, 0.0), 1.0), text=f"{supplier_rows[0]['name']}: {prog.get('pct', 0)}%")
+                st.metric("Stored", value=prog.get("stored", 0), delta=None)
 
     if run_all:
         def _bg_run():

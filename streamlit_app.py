@@ -253,7 +253,7 @@ with tab_suppliers:
 
 with tab_bom:
     st.subheader("Upload & Process BOM")
-    st.write("Accepted: CSV, Excel (.xlsx). Columns: Part_Number, Description, Quantity, Package, Voltage, Other_Specs")
+    st.write("Accepted: CSV, Excel (.xlsx). Columns: Part_Name, Description, Quantity, Package, Voltage, Other_Specs")
     col_a, col_b = st.columns([3, 1])
     with col_a:
         uploaded_file = st.file_uploader("Choose a BOM file", type=["csv", "xlsx"], accept_multiple_files=False)
@@ -335,18 +335,7 @@ with tab_bom:
                     use_container_width=True,
                 )
 
-            csv_bytes = dataframe_to_download_bytes(results_df, kind="csv")
-            xlsx_bytes = dataframe_to_download_bytes(results_df, kind="xlsx")
-            from app.pdf import build_budget_pdf
-            pdf_bytes = build_budget_pdf(bom_df=bom_df, results_df=results_df)
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.download_button("⬇ Download CSV", data=csv_bytes, file_name="bom_results.csv", mime="text/csv")
-            with col2:
-                st.download_button("⬇ Download Excel", data=xlsx_bytes, file_name="bom_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            with col3:
-                st.download_button("📄 Download Budget PDF", data=pdf_bytes, file_name="bom_budget.pdf", mime="application/pdf")
-
+            # Suggestions with add-to-available capability
             st.subheader("▼ Suggestions (Unique Alternatives)")
             seen = set()
             unique_rows = []
@@ -389,8 +378,46 @@ with tab_bom:
                         "Purchase Link": st.column_config.LinkColumn("Purchase Link"),
                     },
                 )
+                # Add one of the suggestions to Available Matches
+                with st.form("add_suggestion_form"):
+                    st.caption("Add a suggested item to Available Matches")
+                    sel_idx = st.selectbox(
+                        "Choose suggestion",
+                        options=list(range(len(suggestions_df))),
+                        format_func=lambda i: f"{suggestions_df.iloc[i]['Found Part Name']} ({suggestions_df.iloc[i]['Supplier']})",
+                    )
+                    add_submit = st.form_submit_button("Add to Available")
+                    if add_submit:
+                        row = suggestions_df.iloc[int(sel_idx)].to_dict()
+                        # Construct a new available row with minimal required fields
+                        new_row = {
+                            "Status": "Available",
+                            "BOM Part Name": row.get("Found Part Name"),
+                            "Found Part Name": row.get("Found Part Name"),
+                            "Supplier": row.get("Supplier"),
+                            "Price": row.get("Price"),
+                            "Stock Availability": row.get("Stock Availability"),
+                            "Image": row.get("Image"),
+                            "Datasheet Link": row.get("Datasheet Link"),
+                            "Purchase Link": row.get("Purchase Link"),
+                            "Similarity %": row.get("Similarity %", 0.0),
+                        }
+                        results_df = pd.concat([results_df, pd.DataFrame([new_row])], ignore_index=True)
+                        st.success("Suggestion added to Available Matches. Exports will include it.")
             else:
                 st.caption("No alternative suggestions available.")
+
+            csv_bytes = dataframe_to_download_bytes(results_df, kind="csv")
+            xlsx_bytes = dataframe_to_download_bytes(results_df, kind="xlsx")
+            from app.pdf import build_budget_pdf
+            pdf_bytes = build_budget_pdf(bom_df=bom_df, results_df=results_df)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.download_button("⬇ Download CSV", data=csv_bytes, file_name="bom_results.csv", mime="text/csv")
+            with col2:
+                st.download_button("⬇ Download Excel", data=xlsx_bytes, file_name="bom_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            with col3:
+                st.download_button("📄 Download Budget PDF", data=pdf_bytes, file_name="bom_budget.pdf", mime="application/pdf")
 
 with tab_inventory:
     st.subheader("Inventory by Supplier")
